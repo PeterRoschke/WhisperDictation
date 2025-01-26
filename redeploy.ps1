@@ -1,3 +1,7 @@
+param(
+    [switch]$InPlace = $false
+)
+
 # Stop on any error
 $ErrorActionPreference = "Stop"
 
@@ -36,8 +40,25 @@ $vsixFile = Get-ChildItem -Filter "*.vsix" | Select-Object -First 1
 if ($vsixFile) {
     cursor --install-extension $vsixFile.Name
     Write-Host "Extension redeployed successfully!" -ForegroundColor Green
-    Write-Host "Please restart Cursor to load the updated extension." -ForegroundColor Yellow
+    
+    if ($InPlace) {
+        Write-Host "Press Ctrl+R Ctrl+R in VS Code to reload the window." -ForegroundColor Yellow
+    } else {
+        Write-Host "Please restart Cursor to load the updated extension." -ForegroundColor Yellow
+    }
 } else {
     Write-Host "Failed to find .vsix file!" -ForegroundColor Red
     exit 1
+}
+
+Write-Host "Deploying extension..."
+$extensionPath = "$env:USERPROFILE\.vscode\extensions\whisperdictation"
+Remove-Item -Path $extensionPath -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item -Path "." -Destination $extensionPath -Recurse
+
+if ($InPlace) {
+    Write-Host "Extension deployed. Press Ctrl+R Ctrl+R in VS Code to reload the window."
+} else {
+    Write-Host "Extension deployed. Please restart VS Code to load the new version."
+    Write-Host "TIP: You can use -InPlace switch to deploy without requiring a restart."
 } 

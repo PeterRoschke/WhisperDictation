@@ -37,264 +37,6 @@ async function promptForApiKey() {
   }
 }
 
-function getWebviewContent() {
-  return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <meta http-equiv="Content-Security-Policy" 
-                content="default-src 'none'; 
-                        script-src 'unsafe-inline' 'unsafe-eval'; 
-                        style-src 'unsafe-inline';
-                        media-src mediastream: blob: https: *;
-                        connect-src mediastream: blob: https: *">
-            <title>Whisper Dictation</title>
-            <style>
-                body {
-                    padding: 20px;
-                    color: var(--vscode-foreground);
-                    background-color: var(--vscode-editor-background);
-                    font-family: var(--vscode-font-family);
-                }
-                .container {
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    gap: 20px;
-                }
-                .status {
-                    font-size: 1.2em;
-                    margin-bottom: 10px;
-                    text-align: center;
-                }
-                .visualizer {
-                    width: 100%;
-                    height: 100px;
-                    background: var(--vscode-editor-background);
-                    border: 1px solid var(--vscode-panel-border);
-                }
-                .time {
-                    font-family: monospace;
-                    font-size: 1.5em;
-                }
-                .error {
-                    color: var(--vscode-errorForeground);
-                    margin: 10px 0;
-                    text-align: center;
-                }
-                .button {
-                    padding: 8px 16px;
-                    background: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 14px;
-                }
-                .button:hover {
-                    background: var(--vscode-button-hoverBackground);
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="status">Click "Start Recording" to begin</div>
-                <canvas class="visualizer"></canvas>
-                <div class="time">00:00</div>
-                <button id="startButton" class="button">Start Recording</button>
-                <button id="retryButton" class="button" style="display: none;">Retry Microphone Access</button>
-            </div>
-            <script>
-                const vscode = acquireVsCodeApi();
-                
-                // Initialize UI elements
-                const statusElement = document.querySelector('.status');
-                const startButton = document.querySelector('#startButton');
-                const retryButton = document.querySelector('#retryButton');
-                const visualizer = document.querySelector('.visualizer');
-                const timeDisplay = document.querySelector('.time');
-
-                // Initialize variables
-                let audioContext;
-                let startTime;
-                let animationFrame;
-
-                async function startRecording() {
-                    try {
-                        statusElement.textContent = 'Requesting microphone access...';
-                        startButton.style.display = 'none';
-                        retryButton.style.display = 'none';
-
-                        // Check if we're in a secure context
-                        console.log('Checking secure context:', window.isSecureContext);
-                        if (!window.isSecureContext) {
-                            throw new Error('MediaRecorder requires a secure context (HTTPS or localhost)');
-                        }
-
-                        // Check if MediaDevices API is available
-                        console.log('Checking MediaDevices API:', !!navigator.mediaDevices);
-                        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                            throw new Error('MediaDevices API not available in this environment');
-                        }
-
-                        console.log('Checking microphone permissions...');
-                        // First check if we have permissions
-                        if (navigator.permissions && navigator.permissions.query) {
-                            try {
-                                const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
-                                console.log('Permission query result:', {
-                                    state: permissionStatus.state,
-                                    name: 'microphone'
-                                });
-                                
-                                permissionStatus.onchange = () => {
-                                    console.log('Permission status changed:', permissionStatus.state);
-                                };
-                                
-                                if (permissionStatus.state === 'denied') {
-                                    throw new Error('Microphone access is blocked. Please check your browser settings.');
-                                }
-                            } catch (permError) {
-                                console.error('Error querying permissions:', permError);
-                                throw permError;
-                            }
-                        } else {
-                            console.log('Permissions API not available, proceeding with getUserMedia directly');
-                        }
-
-                        console.log('Requesting getUserMedia...');
-                        const stream = await navigator.mediaDevices.getUserMedia({
-                            audio: {
-                                channelCount: 1,
-                                sampleRate: 16000,
-                                echoCancellation: true,
-                                noiseSuppression: true
-                            }
-                        });
-
-                        statusElement.textContent = 'Recording... Press Ctrl+Insert to stop';
-
-                        // Set up audio context and analyzer
-                        audioContext = new AudioContext();
-                        const source = audioContext.createMediaStreamSource(stream);
-                        const analyzer = audioContext.createAnalyser();
-                        analyzer.fftSize = 2048;
-                        source.connect(analyzer);
-
-                        // Set up visualizer
-                        const canvasCtx = visualizer.getContext('2d');
-                        const bufferLength = analyzer.frequencyBinCount;
-                        const dataArray = new Uint8Array(bufferLength);
-
-                        function drawVisualizer() {
-                            const width = visualizer.width;
-                            const height = visualizer.height;
-                            
-                            analyzer.getByteTimeDomainData(dataArray);
-                            canvasCtx.fillStyle = 'var(--vscode-editor-background)';
-                            canvasCtx.fillRect(0, 0, width, height);
-                            canvasCtx.lineWidth = 2;
-                            canvasCtx.strokeStyle = 'var(--vscode-textLink-foreground)';
-                            canvasCtx.beginPath();
-
-                            const sliceWidth = width / bufferLength;
-                            let x = 0;
-
-                            for (let i = 0; i < bufferLength; i++) {
-                                const v = dataArray[i] / 128.0;
-                                const y = v * height / 2;
-
-                                if (i === 0) {
-                                    canvasCtx.moveTo(x, y);
-                                } else {
-                                    canvasCtx.lineTo(x, y);
-                                }
-
-                                x += sliceWidth;
-                            }
-
-                            canvasCtx.lineTo(width, height / 2);
-                            canvasCtx.stroke();
-                            animationFrame = requestAnimationFrame(drawVisualizer);
-                        }
-
-                        // Start recording
-                        mediaRecorder = new MediaRecorder(stream, {
-                            mimeType: 'audio/webm'
-                        });
-
-                        mediaRecorder.ondataavailable = (event) => {
-                            audioChunks.push(event.data);
-                        };
-
-                        mediaRecorder.onstop = () => {
-                            const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                            vscode.postMessage({ 
-                                type: 'audioData',
-                                data: blob
-                            });
-                            stream.getTracks().forEach(track => track.stop());
-                            if (animationFrame) {
-                                cancelAnimationFrame(animationFrame);
-                            }
-                        };
-
-                        // Start recording and visualization
-                        mediaRecorder.start(1000);
-                        startTime = Date.now();
-                        updateTimer();
-                        drawVisualizer();
-
-                    } catch (error) {
-                        console.error('Recording error:', error);
-                        let errorMessage = error.message;
-                        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                            errorMessage = 'Microphone access was denied. Please allow access and try again.';
-                        }
-                        statusElement.textContent = errorMessage;
-                        startButton.style.display = 'none';
-                        retryButton.style.display = 'block';
-                        vscode.postMessage({ 
-                            type: 'error',
-                            message: errorMessage
-                        });
-                    }
-                }
-
-                // Update timer
-                function updateTimer() {
-                    if (!startTime) return;
-                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                    const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-                    const seconds = (elapsed % 60).toString().padStart(2, '0');
-                    timeDisplay.textContent = \`\${minutes}:\${seconds}\`;
-                    requestAnimationFrame(updateTimer);
-                }
-
-                // Handle button clicks
-                startButton.addEventListener('click', startRecording);
-                retryButton.addEventListener('click', startRecording);
-
-                // Handle messages from the extension
-                window.addEventListener('message', event => {
-                    const message = event.data;
-                    switch (message.type) {
-                        case 'stop':
-                            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                                mediaRecorder.stop();
-                                statusElement.textContent = 'Processing...';
-                            }
-                            break;
-                    }
-                });
-            </script>
-        </body>
-        </html>
-    `;
-}
-
 // Helper function for logging
 function log(message: string, error: boolean = false) {
   const timestamp = new Date().toISOString();
@@ -423,19 +165,23 @@ export function activate(context: vscode.ExtensionContext) {
           "-f",
           "dshow",
           "-audio_buffer_size",
-          "10",
+          "5",
           "-thread_queue_size",
           "1024",
           "-i",
           `audio=${selectedDevice}`,
-          "-acodec",
-          "pcm_s16le",
+          "-c:a",
+          "libopus",
+          "-b:a",
+          "24k",
           "-ar",
           "16000",
           "-ac",
           "1",
           "-f",
-          "wav",
+          "webm",
+          "-flush_packets",
+          "1",
           "-y",
           "pipe:1",
         ];
@@ -445,7 +191,7 @@ export function activate(context: vscode.ExtensionContext) {
         let stderrOutput = "";
 
         recordingProcess.stdout.on("data", (data: Buffer) => {
-          log(`Received audio chunk of size: ${data.length}`);
+          //log(`Received audio chunk of size: ${data.length}`);
           audioChunks.push(data);
         });
 
@@ -507,13 +253,27 @@ async function stopRecording() {
   let debugFilePath: string | undefined;
 
   try {
-    // Stop the ffmpeg process
-    recordingProcess.kill();
+    // Signal FFmpeg to stop gracefully by sending 'q' command
+    recordingProcess.stdin.write("q");
+
+    // Wait for FFmpeg to flush its buffers and exit gracefully
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        recordingProcess.kill();
+        resolve();
+      }, 1000); // Fallback timeout of 1 second
+
+      recordingProcess.on("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
     isRecording = false;
     statusBarItem.text = "$(unmute) Start Dictation";
 
-    // Wait a bit for any remaining data
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Wait a bit longer for any remaining data in the pipe
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     if (!openai) {
       throw new Error("OpenAI client not initialized");
@@ -527,10 +287,10 @@ async function stopRecording() {
 
     // Create both temp and debug files
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    tempFilePath = path.join(os.tmpdir(), `dictation-${Date.now()}.wav`);
-    debugFilePath = path.join(debugDir, `dictation-${timestamp}.wav`);
+    tempFilePath = path.join(os.tmpdir(), `dictation-${Date.now()}.webm`);
+    debugFilePath = path.join(debugDir, `dictation-${timestamp}.webm`);
 
-    // Combine audio chunks and write to files
+    // Combine audio chunks and write directly to files
     const audioBuffer = Buffer.concat(audioChunks);
     console.log("[WhisperDictation] Total audio chunks:", audioChunks.length);
     console.log("[WhisperDictation] Combined buffer size:", audioBuffer.length);
@@ -539,27 +299,9 @@ async function stopRecording() {
       throw new Error("No audio data was captured");
     }
 
-    // Add WAV header if missing
-    const wavHeader = Buffer.alloc(44);
-    wavHeader.write("RIFF", 0);
-    wavHeader.writeUInt32LE(audioBuffer.length + 36, 4);
-    wavHeader.write("WAVE", 8);
-    wavHeader.write("fmt ", 12);
-    wavHeader.writeUInt32LE(16, 16);
-    wavHeader.writeUInt16LE(1, 20);
-    wavHeader.writeUInt16LE(1, 22);
-    wavHeader.writeUInt32LE(16000, 24);
-    wavHeader.writeUInt32LE(16000 * 2, 28);
-    wavHeader.writeUInt16LE(2, 32);
-    wavHeader.writeUInt16LE(16, 34);
-    wavHeader.write("data", 36);
-    wavHeader.writeUInt32LE(audioBuffer.length, 40);
-
-    const finalBuffer = Buffer.concat([wavHeader, audioBuffer]);
-
-    // Write files
-    fs.writeFileSync(tempFilePath, finalBuffer);
-    fs.writeFileSync(debugFilePath, finalBuffer);
+    // Write files directly (WebM already has proper container format)
+    fs.writeFileSync(tempFilePath, audioBuffer);
+    fs.writeFileSync(debugFilePath, audioBuffer);
 
     // Log file details with more information
     log(
@@ -568,16 +310,27 @@ async function stopRecording() {
           {
             tempPath: tempFilePath,
             debugPath: debugFilePath,
-            originalSize: audioBuffer.length,
-            finalSize: finalBuffer.length,
-            sizeInMB: (finalBuffer.length / (1024 * 1024)).toFixed(2) + " MB",
-            firstFewBytes: Array.from(finalBuffer.slice(0, 32))
-              .map((b) => b.toString(16).padStart(2, "0"))
-              .join(" "),
-            hasWavHeader: finalBuffer.slice(0, 4).toString() === "RIFF",
-            sampleRate: finalBuffer.readUInt32LE(24),
-            channels: finalBuffer.readUInt16LE(22),
-            bitsPerSample: finalBuffer.readUInt16LE(34),
+            sizeInMB: (audioBuffer.length / (1024 * 1024)).toFixed(2) + " MB",
+            format: "WebM/Opus",
+            sampleRate: "16000 Hz",
+            channels: "1 (mono)",
+            bitrate: "24 kbps",
+          },
+          null,
+          2
+        )
+    );
+
+    // Call Whisper API
+    const config = vscode.workspace.getConfiguration("whipserdictation");
+    log(
+      "Calling Whisper API with config: " +
+        JSON.stringify(
+          {
+            model: "whisper-1",
+            language: config.get<string>("language") || "en",
+            response_format: "text",
+            fileSize: audioBuffer.length,
           },
           null,
           2
@@ -596,22 +349,6 @@ async function stopRecording() {
       log(`Audio stream error: ${err}`, true);
     });
 
-    // Call Whisper API
-    const config = vscode.workspace.getConfiguration("whipserdictation");
-    log(
-      "Calling Whisper API with config: " +
-        JSON.stringify(
-          {
-            model: "whisper-1",
-            language: config.get<string>("language") || "en",
-            response_format: "text",
-            fileSize: audioBuffer.length,
-          },
-          null,
-          2
-        )
-    );
-
     const transcription = await openai.audio.transcriptions.create({
       file: audioStream,
       model: "whisper-1",
@@ -626,7 +363,7 @@ async function stopRecording() {
       // First, copy to clipboard as backup
       await vscode.env.clipboard.writeText(transcription);
       let inserted = false;
-    
+
       // 3. Try generic paste command
       if (!inserted) {
         try {
@@ -689,13 +426,4 @@ export function deactivate() {
   audioChunks = [];
   // Clear the OpenAI client
   openai = undefined;
-}
-
-function getNonce() {
-  let text = "";
-  const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  for (let i = 0; i < 32; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
 }
