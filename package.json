@@ -1,0 +1,100 @@
+{
+  "name": "whipserdictation",
+  "displayName": "WhipserDictation",
+  "description": "Add Whiesper Speech to Text typing to VSCode",
+  "version": "0.0.1",
+  "publisher": "local-publisher",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "webview": {
+    "allow": {
+      "microphone": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "whipserdictation.startDictation",
+        "title": "Start Dictation"
+      },
+      {
+        "command": "whipserdictation.stopDictation",
+        "title": "Stop Dictation"
+      },
+      {
+        "command": "whipserdictation.openSettings",
+        "title": "Whisper Dictation: Open Settings"
+      },
+      {
+        "command": "whipserdictation.openDevTools",
+        "title": "Open Developer Tools"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Whisper Dictation",
+      "properties": {
+        "whipserdictation.openAIApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key for Whisper transcription"
+        },
+        "whipserdictation.language": {
+          "type": "string",
+          "default": "en",
+          "description": "Language code for transcription (e.g., 'en' for English)"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "whipserdictation.startDictation",
+        "key": "ctrl+insert",
+        "mac": "cmd+insert",
+        "when": "true"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "openai": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.93.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.17.0",
+    "@typescript-eslint/parser": "^8.17.0",
+    "eslint": "^9.16.0",
+    "typescript": "^5.7.2",
+    "ts-loader": "^9.5.1",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1"
+  }
+}
