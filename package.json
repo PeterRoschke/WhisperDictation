@@ -41,11 +41,13 @@
       },
       {
         "command": "whipserdictation.listDevices",
-        "title": "Whisper Dictation: List Audio Devices"
+        "title": "Whisper Dictation: List Audio Devices",
+        "category": "Whisper Dictation"
       },
       {
         "command": "whipserdictation.selectDevice",
-        "title": "Whisper Dictation: Select Audio Device"
+        "title": "Whisper Dictation: Select Audio Device",
+        "category": "Whisper Dictation"
       },
       {
         "command": "whipserdictation.openDevTools",
@@ -64,12 +66,27 @@
         "whipserdictation.language": {
           "type": "string",
           "default": "en",
-          "description": "Language code for transcription (e.g., 'en' for English)"
+          "enum": [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "nl",
+            "pl",
+            "ja",
+            "ko",
+            "zh"
+          ],
+          "description": "Language code for transcription"
         },
         "whipserdictation.audioDevice": {
           "type": "string",
           "default": "",
-          "description": "Audio input device to use for recording. Leave empty to use the first available device."
+          "description": "Audio input device to use for recording",
+          "editPresentation": "singlelineText",
+          "order": 2
         }
       }
     },

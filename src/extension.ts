@@ -84,6 +84,9 @@ export function activate(context: vscode.ExtensionContext) {
   log("Extension path: " + context.extensionPath);
 
   try {
+    // Initialize audio device
+    initializeAudioDevice();
+
     // Register settings command
     let openSettingsCmd = vscode.commands.registerCommand("whipserdictation.openSettings", openSettings);
     context.subscriptions.push(openSettingsCmd);
@@ -171,8 +174,11 @@ async function startRecording() {
 
     // Get audio device
     const deviceId = await selectAudioDevice();
+    if (!deviceId) {
+      throw new Error("No audio device selected");
+    }
 
-    // Build ffmpeg command for audio capture with platform-specific settings
+    // Build ffmpeg command with platform-specific settings
     const platform = os.platform();
     let inputFormat: string;
     let inputDevice: string;
@@ -180,15 +186,15 @@ async function startRecording() {
     switch (platform) {
       case "win32":
         inputFormat = "dshow";
-        inputDevice = `audio=${deviceId}`; // Use selected device ID
+        inputDevice = `audio=${deviceId}`; // DirectShow format
         break;
       case "darwin":
         inputFormat = "avfoundation";
-        inputDevice = ":0"; // Default macOS input device
+        inputDevice = `${deviceId}:`; // AVFoundation format (audio:video)
         break;
       case "linux":
         inputFormat = "alsa";
-        inputDevice = "default"; // Default ALSA device
+        inputDevice = deviceId; // ALSA device name
         break;
       default:
         throw new Error(`Unsupported platform: ${platform}`);
@@ -196,42 +202,62 @@ async function startRecording() {
 
     log(`Using audio input: format=${inputFormat}, device=${inputDevice}`);
 
+    // Common FFmpeg arguments
     const args = [
       "-hide_banner",
       "-f",
       inputFormat,
       "-audio_buffer_size",
-      "50", // Small buffer for lower latency
+      "50",
       "-i",
       inputDevice,
+      // Add auto-gain and volume normalization after input
+      "-af",
+      "volume=2.0,acompressor=threshold=-12dB:ratio=2:attack=200:release=1000",
       "-c:a",
-      "libopus", // Opus codec (excellent for speech)
+      "libopus",
       "-ar",
-      "16000", // 16kHz sample rate (optimal for Whisper)
+      "16000",
       "-ac",
-      "1", // Mono
+      "1",
       "-b:a",
-      "20k", // 20kbps is excellent quality for speech with Opus
+      "20k",
       "-application",
-      "voip", // Optimize for speech
+      "voip",
       "-frame_duration",
-      "20", // 20ms frames (good for speech)
+      "20",
       "-packet_loss",
-      "3", // Small packet loss resilience
+      "3",
       "-f",
-      "webm", // WebM container
-      "-y", // Overwrite output file
-      tempFilePath, // Output file
+      "webm",
+      "-y",
+      tempFilePath,
     ];
+
+    // Platform-specific argument adjustments
+    if (platform === "darwin") {
+      args.splice(2, 0, "-channel_layout", "mono");
+    }
 
     log(`Starting FFmpeg with command: ${ffmpegPath} ${args.join(" ")}`);
 
     // Start ffmpeg process
     recordingProcess = spawn(ffmpegPath, args);
 
-    // Handle process events
+    // Handle process events with better error reporting
     recordingProcess.stderr?.on("data", (data: Buffer) => {
-      log(`[FFmpeg] ${data.toString().trim()}`);
+      const message = data.toString().trim();
+      // Only log actual errors or important messages
+      if (
+        message.toLowerCase().includes("error") ||
+        message.includes("Could not") ||
+        message.includes("Invalid") ||
+        message.includes("No such")
+      ) {
+        log(`[FFmpeg Error] ${message}`, true);
+      } else {
+        log(`[FFmpeg] ${message}`);
+      }
     });
 
     recordingProcess.stdout?.on("data", (data: Buffer) => {
@@ -239,18 +265,32 @@ async function startRecording() {
     });
 
     recordingProcess.on("error", (err: Error) => {
-      log(`FFmpeg error: ${err.message}`, true);
+      log(`FFmpeg process error: ${err.message}`, true);
       throw err;
     });
 
     recordingProcess.on("exit", (code: number | null, signal: string | null) => {
-      log(`FFmpeg process exited with code: ${code}, signal: ${signal}`);
+      if (code !== 0 && code !== null) {
+        log(`FFmpeg process exited with error code: ${code}, signal: ${signal}`, true);
+      } else {
+        log(`FFmpeg process exited with code: ${code}, signal: ${signal}`);
+      }
     });
+
+    // Set up error handling for the process
+    const processError = await new Promise<Error | null>((resolve) => {
+      recordingProcess?.on("error", resolve);
+      recordingProcess?.on("spawn", () => resolve(null));
+    });
+
+    if (processError) {
+      throw processError;
+    }
 
     isRecording = true;
     statusBarItem.text = "$(record) Recording... Click to Stop";
     log("Recording started successfully");
-    vscode.window.showInformationMessage("Recording started! Press Ctrl+Insert or click the status bar icon to stop.");
+    //vscode.window.showInformationMessage("Recording started! Press Ctrl+Insert or click the status bar icon to stop.");
   } catch (error) {
     log(`Failed to start recording: ${error}`, true);
     throw error;
@@ -371,7 +411,7 @@ async function stopRecording() {
     // Write transcription to debug file
     fs.writeFileSync(debugFilePath + ".txt", transcription);
 
-    vscode.window.showInformationMessage("Transcription complete!");
+    //vscode.window.showInformationMessage("Transcription complete!");
   } catch (error) {
     log("Transcription error: " + (error instanceof Error ? error.message : String(error)), true);
     vscode.window.showErrorMessage(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -434,21 +474,53 @@ async function detectAudioDevices(): Promise<AudioDevice[]> {
     }
 
     log("Detecting audio devices...");
-    const args = ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
+    const platform = os.platform();
+    let args: string[];
+
+    switch (platform) {
+      case "win32":
+        args = ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
+        break;
+      case "darwin":
+        args = ["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""];
+        break;
+      case "linux":
+        args = ["-hide_banner", "-f", "alsa", "-list_devices", "true", "-i", "dummy"];
+        break;
+      default:
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
 
     const devices: AudioDevice[] = [];
     const process = spawn(ffmpegPath, args);
+    let output = "";
 
-    // Collect device information
+    // Collect all output
     process.stderr?.on("data", (data: Buffer) => {
-      const output = data.toString().trim();
-      if (output.includes("(audio)")) {
+      output += data.toString();
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      process.on("exit", (code) => {
+        if (code !== 0 && code !== 255) {
+          // FFmpeg returns 255 for help/list commands
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        } else {
+          resolve();
+        }
+      });
+      process.on("error", reject);
+    });
+
+    // Parse devices based on platform
+    switch (platform) {
+      case "win32":
+        // Windows DirectShow format
         const lines = output.split("\n");
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           if (line.includes("(audio)")) {
             const name = line.split('"')[1];
-            // Get the next line which contains the device ID
             const idLine = lines[i + 1]?.trim();
             if (idLine && idLine.includes("Alternative name")) {
               const id = idLine.split('"')[1];
@@ -456,12 +528,34 @@ async function detectAudioDevices(): Promise<AudioDevice[]> {
             }
           }
         }
-      }
-    });
+        break;
 
-    await new Promise<void>((resolve) => {
-      process.on("exit", () => resolve());
-    });
+      case "darwin":
+        // macOS AVFoundation format
+        const audioDeviceRegex = /\[AVFoundation input device @ (.*?)\]\s+\[(\d+)\]\s+(.*)/g;
+        let match;
+        while ((match = audioDeviceRegex.exec(output)) !== null) {
+          const id = match[2];
+          const name = match[3].trim();
+          devices.push({ name, id });
+        }
+        break;
+
+      case "linux":
+        // Linux ALSA format
+        const alsaLines = output.split("\n");
+        for (const line of alsaLines) {
+          if (line.includes("*")) {
+            // ALSA marks default device with *
+            const name = line.trim().split("*")[1]?.trim();
+            if (name) {
+              // For ALSA, name is also the ID
+              devices.push({ name, id: name });
+            }
+          }
+        }
+        break;
+    }
 
     log(`Found ${devices.length} audio devices:`);
     devices.forEach((device) => {
@@ -503,29 +597,71 @@ async function selectAudioDevice(): Promise<string> {
 }
 
 async function promptForDeviceSelection(): Promise<void> {
-  // Update available devices
-  availableDevices = await detectAudioDevices();
+  try {
+    // Update available devices
+    availableDevices = await detectAudioDevices();
 
-  if (availableDevices.length === 0) {
-    vscode.window.showErrorMessage("No audio devices found");
-    return;
+    if (availableDevices.length === 0) {
+      vscode.window.showErrorMessage("No audio devices found");
+      return;
+    }
+
+    // Create QuickPick items
+    const items = availableDevices.map((device) => ({
+      label: device.name,
+      description: device.id,
+      detail: "Audio Input Device",
+    }));
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: "Select audio input device",
+      title: "Available Audio Devices",
+    });
+
+    if (selected) {
+      // Save to settings
+      const config = vscode.workspace.getConfiguration("whipserdictation");
+      await config.update("audioDevice", selected.description, vscode.ConfigurationTarget.Global);
+
+      // Update status bar to show selected device
+      statusBarItem.tooltip = `Current audio device: ${selected.label}`;
+
+      vscode.window.showInformationMessage(`Audio device set to: ${selected.label}`);
+      log(`Audio device configured: ${selected.label} (${selected.description})`);
+    }
+  } catch (error) {
+    log(`Error selecting audio device: ${error}`, true);
+    vscode.window.showErrorMessage(`Failed to select audio device: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
 
-  // Create QuickPick items
-  const items = availableDevices.map((device) => ({
-    label: device.name,
-    description: device.id,
-  }));
+// Add a new function to initialize the audio device on startup
+async function initializeAudioDevice(): Promise<void> {
+  try {
+    // Update available devices
+    availableDevices = await detectAudioDevices();
 
-  const selected = await vscode.window.showQuickPick(items, {
-    placeHolder: "Select audio input device",
-  });
+    if (availableDevices.length === 0) {
+      log("No audio devices found during initialization");
+      return;
+    }
 
-  if (selected) {
-    // Save to settings
+    // Get configured device from settings
     const config = vscode.workspace.getConfiguration("whipserdictation");
-    await config.update("audioDevice", selected.description, true);
-    vscode.window.showInformationMessage(`Audio device set to: ${selected.label}`);
+    const configuredDevice = config.get<string>("audioDevice");
+
+    // If no device is configured, set the first available one
+    if (!configuredDevice && availableDevices.length > 0) {
+      const defaultDevice = availableDevices[0];
+      await config.update("audioDevice", defaultDevice.id, vscode.ConfigurationTarget.Global);
+      log(`Initialized default audio device: ${defaultDevice.name} (${defaultDevice.id})`);
+    }
+
+    // Update status bar tooltip with current device
+    const currentDevice = availableDevices.find((d) => d.id === configuredDevice) || availableDevices[0];
+    statusBarItem.tooltip = `Current audio device: ${currentDevice.name}`;
+  } catch (error) {
+    log(`Error initializing audio device: ${error}`, true);
   }
 }
 
