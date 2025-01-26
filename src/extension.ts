@@ -4,22 +4,44 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
 import OpenAI from "openai";
-import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { Readable } from "stream";
+import { spawn } from "child_process";
 
 let isRecording = false;
-let recordingProcess: any;
-let audioChunks: Buffer[] = [];
+let recordingProcess: ReturnType<typeof spawn> | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let openai: OpenAI | undefined;
 let outputChannel: vscode.OutputChannel;
-let selectedDevice: string | undefined;
+let tempFilePath: string | undefined;
+let extensionContext: vscode.ExtensionContext;
 
 interface RecordingError extends Error {
   message: string;
+}
+
+interface AudioDevice {
+  name: string;
+  id: string;
+}
+
+let availableDevices: AudioDevice[] = [];
+
+// Helper function to get the ffmpeg binary path
+function getFfmpegPath(): string {
+  const platform = os.platform();
+  const binDir = path.join(extensionContext.extensionPath, "resources", "bin");
+  const ffmpegPath = path.join(
+    binDir,
+    platform === "win32" ? "win32/ffmpeg.exe" : platform === "darwin" ? "darwin/ffmpeg" : "linux/ffmpeg"
+  );
+
+  log(`Platform: ${platform}`);
+  log(`FFmpeg path: ${ffmpegPath}`);
+  log(`Extension path: ${extensionContext.extensionPath}`);
+
+  return ffmpegPath;
 }
 
 async function openSettings() {
@@ -49,55 +71,11 @@ function log(message: string, error: boolean = false) {
   }
 }
 
-// Pre-initialize FFmpeg process
-async function initializeFFmpeg() {
-  try {
-    // List devices
-    const ffmpegArgs = ["-hide_banner", "-loglevel", "info", "-f", "dshow", "-list_devices", "true", "-i", "dummy"];
-    const listDevicesProcess = spawn("ffmpeg", ffmpegArgs);
-    let deviceList = "";
-
-    listDevicesProcess.stderr.on("data", (data: Buffer) => {
-      deviceList += data.toString();
-      log(`[FFmpeg Devices] ${data.toString()}`);
-    });
-
-    await new Promise((resolve, reject) => {
-      listDevicesProcess.on("exit", (code: number) => {
-        log(`Device listing process exited with code: ${code}`);
-        resolve(code);
-      });
-      listDevicesProcess.on("error", reject);
-    });
-
-    // Parse device list
-    const audioDevices = deviceList
-      .split("\n")
-      .filter((line) => line.includes("(audio)"))
-      .map((line) => {
-        const match = line.match(/"([^"]+)"/);
-        return match ? match[1] : undefined;
-      })
-      .filter((device): device is string => device !== undefined);
-
-    if (audioDevices.length === 0) {
-      throw new Error("No audio devices found");
-    }
-
-    log("Available audio devices: " + JSON.stringify(audioDevices));
-    selectedDevice = audioDevices[0];
-    log("Selected audio device: " + selectedDevice);
-
-    return true;
-  } catch (error) {
-    log(`FFmpeg initialization error: ${error}`, true);
-    return false;
-  }
-}
-
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
+  extensionContext = context;
+
   // Create output channel
   outputChannel = vscode.window.createOutputChannel("WhisperDictation");
   context.subscriptions.push(outputChannel);
@@ -106,15 +84,6 @@ export function activate(context: vscode.ExtensionContext) {
   log("Extension path: " + context.extensionPath);
 
   try {
-    // Initialize FFmpeg during activation
-    initializeFFmpeg().then((initialized) => {
-      if (initialized) {
-        log("FFmpeg pre-initialized successfully");
-      } else {
-        log("FFmpeg pre-initialization failed, will retry on first use", true);
-      }
-    });
-
     // Register settings command
     let openSettingsCmd = vscode.commands.registerCommand("whipserdictation.openSettings", openSettings);
     context.subscriptions.push(openSettingsCmd);
@@ -146,76 +115,8 @@ export function activate(context: vscode.ExtensionContext) {
           openai = new OpenAI({ apiKey });
         }
 
-        // Initialize FFmpeg if needed
-        if (!selectedDevice) {
-          const initialized = await initializeFFmpeg();
-          if (!initialized) {
-            throw new Error("Failed to initialize audio device");
-          }
-        }
-
-        // Clear previous chunks
-        audioChunks = [];
-
-        // Start recording with pre-initialized device
-        const recordArgs = [
-          "-hide_banner",
-          "-loglevel",
-          "info",
-          "-f",
-          "dshow",
-          "-audio_buffer_size",
-          "5",
-          "-thread_queue_size",
-          "1024",
-          "-i",
-          `audio=${selectedDevice}`,
-          "-c:a",
-          "libopus",
-          "-b:a",
-          "24k",
-          "-ar",
-          "16000",
-          "-ac",
-          "1",
-          "-f",
-          "webm",
-          "-flush_packets",
-          "1",
-          "-y",
-          "pipe:1",
-        ];
-
-        log("Starting recording with args: " + JSON.stringify(recordArgs));
-        recordingProcess = spawn("ffmpeg", recordArgs);
-        let stderrOutput = "";
-
-        recordingProcess.stdout.on("data", (data: Buffer) => {
-          //log(`Received audio chunk of size: ${data.length}`);
-          audioChunks.push(data);
-        });
-
-        recordingProcess.stderr.on("data", (data: Buffer) => {
-          stderrOutput += data.toString();
-          log(`[FFmpeg] ${data.toString()}`);
-        });
-
-        recordingProcess.on("error", (err: Error) => {
-          log(`FFmpeg error: ${err.message}`, true);
-          log(`FFmpeg stderr output: ${stderrOutput}`, true);
-          throw new Error(`Failed to start recording: ${err.message}`);
-        });
-
-        recordingProcess.on("exit", (code: number) => {
-          log(`FFmpeg process exited with code: ${code}`);
-          if (code !== 0) {
-            log(`FFmpeg stderr output: ${stderrOutput}`, true);
-          }
-        });
-
-        isRecording = true;
-        statusBarItem.text = "$(record) Recording... Click to Stop";
-        vscode.window.showInformationMessage("Recording started! Press Ctrl+Insert or click the status bar icon to stop.");
+        // Initialize audio recorder
+        await startRecording();
       } catch (error) {
         console.error("[WhisperDictation] Recording error:", error);
         vscode.window.showErrorMessage(`Failed to start recording: ${error instanceof Error ? error.message : String(error)}`);
@@ -226,8 +127,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     let stopDictationCmd = vscode.commands.registerCommand("whipserdictation.stopDictation", stopRecording);
 
+    let listDevicesCmd = vscode.commands.registerCommand("whipserdictation.listDevices", listAudioDevices);
+
+    let selectDeviceCmd = vscode.commands.registerCommand("whipserdictation.selectDevice", promptForDeviceSelection);
+
     context.subscriptions.push(startDictationCmd);
     context.subscriptions.push(stopDictationCmd);
+    context.subscriptions.push(listDevicesCmd);
+    context.subscriptions.push(selectDeviceCmd);
 
     // Verify command registration
     vscode.commands.getCommands(true).then((commands) => {
@@ -235,6 +142,8 @@ export function activate(context: vscode.ExtensionContext) {
       console.log("[WhisperDictation] Checking if our commands are registered:");
       console.log("startDictation registered:", commands.includes("whipserdictation.startDictation"));
       console.log("stopDictation registered:", commands.includes("whipserdictation.stopDictation"));
+      console.log("listDevices registered:", commands.includes("whipserdictation.listDevices"));
+      console.log("selectDevice registered:", commands.includes("whipserdictation.selectDevice"));
     });
 
     log("Extension successfully activated");
@@ -244,77 +153,194 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
+async function startRecording() {
+  try {
+    // Create temp file path
+    tempFilePath = path.join(os.tmpdir(), `dictation-${Date.now()}.webm`);
+    log(`Temp file path: ${tempFilePath}`);
+
+    // Get ffmpeg path
+    const ffmpegPath = getFfmpegPath();
+
+    // Ensure ffmpeg exists
+    if (!fs.existsSync(ffmpegPath)) {
+      log(`FFmpeg not found at path: ${ffmpegPath}`, true);
+      throw new Error(`FFmpeg not found at ${ffmpegPath}`);
+    }
+    log(`FFmpeg found at: ${ffmpegPath}`);
+
+    // Get audio device
+    const deviceId = await selectAudioDevice();
+
+    // Build ffmpeg command for audio capture with platform-specific settings
+    const platform = os.platform();
+    let inputFormat: string;
+    let inputDevice: string;
+
+    switch (platform) {
+      case "win32":
+        inputFormat = "dshow";
+        inputDevice = `audio=${deviceId}`; // Use selected device ID
+        break;
+      case "darwin":
+        inputFormat = "avfoundation";
+        inputDevice = ":0"; // Default macOS input device
+        break;
+      case "linux":
+        inputFormat = "alsa";
+        inputDevice = "default"; // Default ALSA device
+        break;
+      default:
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
+
+    log(`Using audio input: format=${inputFormat}, device=${inputDevice}`);
+
+    const args = [
+      "-hide_banner",
+      "-f",
+      inputFormat,
+      "-audio_buffer_size",
+      "50", // Small buffer for lower latency
+      "-i",
+      inputDevice,
+      "-c:a",
+      "libopus", // Opus codec (excellent for speech)
+      "-ar",
+      "16000", // 16kHz sample rate (optimal for Whisper)
+      "-ac",
+      "1", // Mono
+      "-b:a",
+      "20k", // 20kbps is excellent quality for speech with Opus
+      "-application",
+      "voip", // Optimize for speech
+      "-frame_duration",
+      "20", // 20ms frames (good for speech)
+      "-packet_loss",
+      "3", // Small packet loss resilience
+      "-f",
+      "webm", // WebM container
+      "-y", // Overwrite output file
+      tempFilePath, // Output file
+    ];
+
+    log(`Starting FFmpeg with command: ${ffmpegPath} ${args.join(" ")}`);
+
+    // Start ffmpeg process
+    recordingProcess = spawn(ffmpegPath, args);
+
+    // Handle process events
+    recordingProcess.stderr?.on("data", (data: Buffer) => {
+      log(`[FFmpeg] ${data.toString().trim()}`);
+    });
+
+    recordingProcess.stdout?.on("data", (data: Buffer) => {
+      log(`[FFmpeg stdout] ${data.toString().trim()}`);
+    });
+
+    recordingProcess.on("error", (err: Error) => {
+      log(`FFmpeg error: ${err.message}`, true);
+      throw err;
+    });
+
+    recordingProcess.on("exit", (code: number | null, signal: string | null) => {
+      log(`FFmpeg process exited with code: ${code}, signal: ${signal}`);
+    });
+
+    isRecording = true;
+    statusBarItem.text = "$(record) Recording... Click to Stop";
+    log("Recording started successfully");
+    vscode.window.showInformationMessage("Recording started! Press Ctrl+Insert or click the status bar icon to stop.");
+  } catch (error) {
+    log(`Failed to start recording: ${error}`, true);
+    throw error;
+  }
+}
+
 async function stopRecording() {
-  if (!isRecording || !recordingProcess) {
+  if (!isRecording || !recordingProcess || !tempFilePath) {
+    log("Stop recording called but recording is not active");
     return;
   }
 
-  let tempFilePath: string | undefined;
-  let debugFilePath: string | undefined;
-
   try {
-    // Signal FFmpeg to stop gracefully by sending 'q' command
-    recordingProcess.stdin.write("q");
+    log("Stopping recording process...");
+    // Stop recording gracefully
+    recordingProcess.stdin?.write("q");
 
-    // Wait for FFmpeg to flush its buffers and exit gracefully
+    // Wait for process to exit
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        recordingProcess.kill();
+        log("FFmpeg process timeout, killing forcefully");
+        recordingProcess?.kill();
         resolve();
-      }, 1000); // Fallback timeout of 1 second
+      }, 1000);
 
-      recordingProcess.on("exit", () => {
+      recordingProcess?.on("exit", () => {
+        log("FFmpeg process exited normally");
         clearTimeout(timeout);
         resolve();
       });
     });
 
+    // Add a small delay to ensure file is fully written
+    log("Waiting for file to be written...");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Verify the temp file exists and has content
+    log(`Checking temp file: ${tempFilePath}`);
+    if (!fs.existsSync(tempFilePath)) {
+      log(`Temp file not found at: ${tempFilePath}`, true);
+      throw new Error("Recording file not found. The recording may have failed.");
+    }
+
+    const stats = fs.statSync(tempFilePath);
+    log(`Temp file size: ${stats.size} bytes`);
+    if (stats.size === 0) {
+      log("Temp file is empty", true);
+      throw new Error("Recording file is empty. The recording may have failed.");
+    }
+
     isRecording = false;
     statusBarItem.text = "$(unmute) Start Dictation";
 
-    // Wait a bit longer for any remaining data in the pipe
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Create debug directory if it doesn't exist
+    const debugDir = path.join(extensionContext.extensionPath, "DictationAudio");
+    log(`Debug directory path: ${debugDir}`);
+    if (!fs.existsSync(debugDir)) {
+      log(`Creating debug directory: ${debugDir}`);
+      fs.mkdirSync(debugDir);
+    }
+
+    // Create debug file path
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const debugFilePath = path.join(debugDir, `dictation-${timestamp}.webm`);
+    log(`Debug file path: ${debugFilePath}`);
+
+    // Copy file to debug directory
+    log(`Copying temp file to debug directory...`);
+    fs.copyFileSync(tempFilePath, debugFilePath);
+    log(`File copied successfully to: ${debugFilePath}`);
 
     if (!openai) {
       throw new Error("OpenAI client not initialized");
     }
 
-    // Create debug directory if it doesn't exist
-    const debugDir = path.join(vscode.workspace.workspaceFolders?.[0].uri.fsPath || "", "DictationAudio");
-    if (!fs.existsSync(debugDir)) {
-      fs.mkdirSync(debugDir);
-    }
+    // Create a readable stream from the temp file
+    const audioStream = fs.createReadStream(tempFilePath);
 
-    // Create both temp and debug files
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    tempFilePath = path.join(os.tmpdir(), `dictation-${Date.now()}.webm`);
-    debugFilePath = path.join(debugDir, `dictation-${timestamp}.webm`);
-
-    // Combine audio chunks and write directly to files
-    const audioBuffer = Buffer.concat(audioChunks);
-    console.log("[WhisperDictation] Total audio chunks:", audioChunks.length);
-    console.log("[WhisperDictation] Combined buffer size:", audioBuffer.length);
-
-    if (audioBuffer.length === 0) {
-      throw new Error("No audio data was captured");
-    }
-
-    // Write files directly (WebM already has proper container format)
-    fs.writeFileSync(tempFilePath, audioBuffer);
-    fs.writeFileSync(debugFilePath, audioBuffer);
-
-    // Log file details with more information
+    // Log file details
     log(
       "Audio file details: " +
         JSON.stringify(
           {
             tempPath: tempFilePath,
             debugPath: debugFilePath,
-            sizeInMB: (audioBuffer.length / (1024 * 1024)).toFixed(2) + " MB",
-            format: "WebM/Opus",
+            sizeInMB: (stats.size / (1024 * 1024)).toFixed(2) + " MB",
+            format: "WebM",
             sampleRate: "16000 Hz",
             channels: "1 (mono)",
-            bitrate: "24 kbps",
+            bitrate: "20 kbps",
           },
           null,
           2
@@ -323,32 +349,6 @@ async function stopRecording() {
 
     // Call Whisper API
     const config = vscode.workspace.getConfiguration("whipserdictation");
-    log(
-      "Calling Whisper API with config: " +
-        JSON.stringify(
-          {
-            model: "whisper-1",
-            language: config.get<string>("language") || "en",
-            response_format: "text",
-            fileSize: audioBuffer.length,
-          },
-          null,
-          2
-        )
-    );
-
-    // Create a readable stream from the temp file
-    const audioStream = fs.createReadStream(tempFilePath);
-
-    // Log stream details
-    audioStream.on("open", () => {
-      log("Audio stream opened");
-    });
-
-    audioStream.on("error", (err) => {
-      log(`Audio stream error: ${err}`, true);
-    });
-
     const transcription = await openai.audio.transcriptions.create({
       file: audioStream,
       model: "whisper-1",
@@ -360,22 +360,9 @@ async function stopRecording() {
 
     // Insert text
     try {
-      // First, copy to clipboard as backup
       await vscode.env.clipboard.writeText(transcription);
-      let inserted = false;
-
-      // 3. Try generic paste command
-      if (!inserted) {
-        try {
-          await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
-          inserted = true;
-          log("Inserted text using paste command");
-        } catch (e) {
-          log(`Paste command failed: ${e}`, true);
-          vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
-          log("Defaulted to clipboard with user notification");
-        }
-      }
+      await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
+      log("Inserted text using paste command");
     } catch (insertError) {
       log(`Text insertion failed: ${insertError}`, true);
       vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
@@ -387,24 +374,9 @@ async function stopRecording() {
     vscode.window.showInformationMessage("Transcription complete!");
   } catch (error) {
     log("Transcription error: " + (error instanceof Error ? error.message : String(error)), true);
-    if (error instanceof Error) {
-      log(
-        "Error details: " +
-          JSON.stringify(
-            {
-              name: error.name,
-              message: error.message,
-              stack: error.stack,
-            },
-            null,
-            2
-          ),
-        true
-      );
-    }
     vscode.window.showErrorMessage(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    // Clean up temp file but keep debug file for inspection
+    // Clean up temp file
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
         fs.unlinkSync(tempFilePath);
@@ -412,8 +384,148 @@ async function stopRecording() {
         console.error("Failed to clean up temp file:", error);
       }
     }
-    // Clear the audio chunks
-    audioChunks = [];
+
+    // Clean up recording process
+    if (recordingProcess) {
+      try {
+        recordingProcess.kill();
+      } catch (error) {
+        console.error("Failed to kill recording process:", error);
+      }
+      recordingProcess = undefined;
+    }
+
+    tempFilePath = undefined;
+  }
+}
+
+async function listAudioDevices(): Promise<void> {
+  try {
+    const ffmpegPath = getFfmpegPath();
+    if (!fs.existsSync(ffmpegPath)) {
+      throw new Error(`FFmpeg not found at ${ffmpegPath}`);
+    }
+
+    log("Listing available audio devices...");
+    const args = ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
+
+    const process = spawn(ffmpegPath, args);
+
+    process.stderr?.on("data", (data: Buffer) => {
+      const output = data.toString().trim();
+      if (output.includes("DirectShow audio devices") || output.includes("Alternative name")) {
+        log(output);
+      }
+    });
+
+    await new Promise<void>((resolve) => {
+      process.on("exit", () => resolve());
+    });
+  } catch (error) {
+    log(`Failed to list audio devices: ${error}`, true);
+  }
+}
+
+async function detectAudioDevices(): Promise<AudioDevice[]> {
+  try {
+    const ffmpegPath = getFfmpegPath();
+    if (!fs.existsSync(ffmpegPath)) {
+      throw new Error(`FFmpeg not found at ${ffmpegPath}`);
+    }
+
+    log("Detecting audio devices...");
+    const args = ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
+
+    const devices: AudioDevice[] = [];
+    const process = spawn(ffmpegPath, args);
+
+    // Collect device information
+    process.stderr?.on("data", (data: Buffer) => {
+      const output = data.toString().trim();
+      if (output.includes("(audio)")) {
+        const lines = output.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line.includes("(audio)")) {
+            const name = line.split('"')[1];
+            // Get the next line which contains the device ID
+            const idLine = lines[i + 1]?.trim();
+            if (idLine && idLine.includes("Alternative name")) {
+              const id = idLine.split('"')[1];
+              devices.push({ name, id });
+            }
+          }
+        }
+      }
+    });
+
+    await new Promise<void>((resolve) => {
+      process.on("exit", () => resolve());
+    });
+
+    log(`Found ${devices.length} audio devices:`);
+    devices.forEach((device) => {
+      log(`- ${device.name} (${device.id})`);
+    });
+
+    return devices;
+  } catch (error) {
+    log(`Failed to detect audio devices: ${error}`, true);
+    return [];
+  }
+}
+
+async function selectAudioDevice(): Promise<string> {
+  // Update available devices
+  availableDevices = await detectAudioDevices();
+
+  if (availableDevices.length === 0) {
+    throw new Error("No audio devices found");
+  }
+
+  // Get configured device from settings
+  const config = vscode.workspace.getConfiguration("whipserdictation");
+  const configuredDevice = config.get<string>("audioDevice");
+
+  // If a device is configured, check if it's available
+  if (configuredDevice) {
+    const device = availableDevices.find((d) => d.id === configuredDevice);
+    if (device) {
+      log(`Using configured audio device: ${device.name}`);
+      return device.id;
+    }
+    log(`Configured device not found: ${configuredDevice}`, true);
+  }
+
+  // Use first available device
+  log(`Using first available audio device: ${availableDevices[0].name}`);
+  return availableDevices[0].id;
+}
+
+async function promptForDeviceSelection(): Promise<void> {
+  // Update available devices
+  availableDevices = await detectAudioDevices();
+
+  if (availableDevices.length === 0) {
+    vscode.window.showErrorMessage("No audio devices found");
+    return;
+  }
+
+  // Create QuickPick items
+  const items = availableDevices.map((device) => ({
+    label: device.name,
+    description: device.id,
+  }));
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: "Select audio input device",
+  });
+
+  if (selected) {
+    // Save to settings
+    const config = vscode.workspace.getConfiguration("whipserdictation");
+    await config.update("audioDevice", selected.description, true);
+    vscode.window.showInformationMessage(`Audio device set to: ${selected.label}`);
   }
 }
 
@@ -422,8 +534,6 @@ export function deactivate() {
   if (isRecording && recordingProcess) {
     recordingProcess.kill();
   }
-  // Clear the audio chunks
-  audioChunks = [];
-  // Clear the OpenAI client
+  recordingProcess = undefined;
   openai = undefined;
 }

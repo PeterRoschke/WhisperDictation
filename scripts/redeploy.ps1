@@ -75,9 +75,8 @@ if ($vsixFile) {
 }
 
 Write-Host "Deploying extension..."
-$extensionPath = "$env:USERPROFILE\.cursor\extensions\local-publisher.whipserdictation-0.0.1"
+$extensionPath = "$env:USERPROFILE\.vscode\extensions\whisperdictation"
 Remove-Item -Path $extensionPath -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $extensionPath | Out-Null
 Copy-Item -Path "." -Destination $extensionPath -Recurse
 
 if ($InPlace) {
