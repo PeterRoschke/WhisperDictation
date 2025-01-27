@@ -17,6 +17,10 @@ let openai: OpenAI | undefined;
 let outputChannel: vscode.OutputChannel;
 let tempFilePath: string | undefined;
 let extensionContext: vscode.ExtensionContext;
+let recordingTimer: NodeJS.Timeout | undefined;
+let currentAudioDevice: AudioDevice | undefined;
+
+const OPENAI_API_KEY_SECRET = "openai-api-key";
 
 // Type definitions
 interface AudioDevice {
@@ -47,13 +51,21 @@ async function openSettings() {
 }
 
 async function promptForApiKey() {
-  const action = await vscode.window.showErrorMessage(
-    "OpenAI API key not configured. Please set your API key in settings.",
-    "Open Settings"
-  );
+  const action = await vscode.window.showInformationMessage("OpenAI API key not configured. Please enter your API key.", "Enter API Key");
 
-  if (action === "Open Settings") {
-    await openSettings();
+  if (action === "Enter API Key") {
+    const apiKey = await vscode.window.showInputBox({
+      prompt: "Enter your OpenAI API key",
+      password: true,
+      placeHolder: "sk-...",
+    });
+
+    if (apiKey) {
+      await extensionContext.secrets.store(OPENAI_API_KEY_SECRET, apiKey);
+      // Initialize OpenAI client with the new key
+      openai = new OpenAI({ apiKey });
+      vscode.window.showInformationMessage("API key saved securely");
+    }
   }
 }
 
@@ -103,9 +115,8 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // Check API key
-        const config = vscode.workspace.getConfiguration("whipserdictation");
-        const apiKey = config.get<string>("openAIApiKey");
+        // Check API key from secure storage
+        const apiKey = await extensionContext.secrets.get(OPENAI_API_KEY_SECRET);
         if (!apiKey) {
           await promptForApiKey();
           return;
@@ -128,13 +139,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     let stopDictationCmd = vscode.commands.registerCommand("whipserdictation.stopDictation", stopRecording);
 
-    let listDevicesCmd = vscode.commands.registerCommand("whipserdictation.listDevices", listAudioDevices);
-
     let selectDeviceCmd = vscode.commands.registerCommand("whipserdictation.selectDevice", promptForDeviceSelection);
 
     context.subscriptions.push(startDictationCmd);
     context.subscriptions.push(stopDictationCmd);
-    context.subscriptions.push(listDevicesCmd);
     context.subscriptions.push(selectDeviceCmd);
 
     // Verify command registration
@@ -143,7 +151,6 @@ export function activate(context: vscode.ExtensionContext) {
       console.log("[WhisperDictation] Checking if our commands are registered:");
       console.log("startDictation registered:", commands.includes("whipserdictation.startDictation"));
       console.log("stopDictation registered:", commands.includes("whipserdictation.stopDictation"));
-      console.log("listDevices registered:", commands.includes("whipserdictation.listDevices"));
       console.log("selectDevice registered:", commands.includes("whipserdictation.selectDevice"));
     });
 
@@ -156,6 +163,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 async function startRecording() {
   try {
+    // Get audio device first before creating temp file to minimize delay
+    const deviceId = await selectAudioDevice();
+    if (!deviceId) {
+      throw new Error("No audio device selected");
+    }
+
     // Create temp file path
     tempFilePath = path.join(os.tmpdir(), `dictation-${Date.now()}.webm`);
     log(`Temp file path: ${tempFilePath}`);
@@ -167,13 +180,6 @@ async function startRecording() {
     if (!fs.existsSync(ffmpegPath)) {
       log(`FFmpeg not found at path: ${ffmpegPath}`, true);
       throw new Error(`FFmpeg not found at ${ffmpegPath}`);
-    }
-    log(`FFmpeg found at: ${ffmpegPath}`);
-
-    // Get audio device
-    const deviceId = await selectAudioDevice();
-    if (!deviceId) {
-      throw new Error("No audio device selected");
     }
 
     // Build ffmpeg command with platform-specific settings
@@ -200,13 +206,13 @@ async function startRecording() {
 
     log(`Using audio input: format=${inputFormat}, device=${inputDevice}`);
 
-    // Common FFmpeg arguments
+    // Common FFmpeg arguments - add a small pre-recording buffer
     const args = [
       "-hide_banner",
       "-f",
       inputFormat,
       "-audio_buffer_size",
-      "50",
+      "25", // Reduced buffer size for faster startup
       "-i",
       inputDevice,
       // Add auto-gain and volume normalization after input
@@ -238,6 +244,10 @@ async function startRecording() {
     }
 
     //log(`Starting FFmpeg with command: ${ffmpegPath} ${args.join(" ")}`);
+
+    // Update status bar before starting recording to minimize perceived delay
+    statusBarItem.text = "$(record) Recording... Click to Stop";
+    isRecording = true;
 
     // Start ffmpeg process
     recordingProcess = spawn(ffmpegPath, args);
@@ -285,10 +295,14 @@ async function startRecording() {
       throw processError;
     }
 
-    isRecording = true;
-    statusBarItem.text = "$(record) Recording... Click to Stop";
     log("Recording started successfully");
-    //vscode.window.showInformationMessage("Recording started! Press Ctrl+Insert or click the status bar icon to stop.");
+
+    // Set up 30-minute timer to automatically stop recording
+    recordingTimer = setTimeout(async () => {
+      log("30-minute recording limit reached, stopping automatically");
+      vscode.window.showInformationMessage("Recording stopped automatically after 30 minutes");
+      await stopRecording();
+    }, 30 * 60 * 1000); // 30 minutes in milliseconds
   } catch (error) {
     log(`Failed to start recording: ${error}`, true);
     throw error;
@@ -296,6 +310,12 @@ async function startRecording() {
 }
 
 async function stopRecording() {
+  // Clear the recording timer if it exists
+  if (recordingTimer) {
+    clearTimeout(recordingTimer);
+    recordingTimer = undefined;
+  }
+
   if (!isRecording || !recordingProcess || !tempFilePath) {
     log("Stop recording called but recording is not active");
     return;
@@ -396,15 +416,10 @@ async function stopRecording() {
 
     console.log("[WhisperDictation] Transcription successful, length:", transcription.length);
 
-    // Insert text
-    try {
-      await vscode.env.clipboard.writeText(transcription);
-      await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
-      log("Inserted text using paste command");
-    } catch (insertError) {
-      log(`Text insertion failed: ${insertError}`, true);
-      vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
-    }
+    // Simplified text insertion using clipboard
+    await vscode.env.clipboard.writeText(transcription);
+    await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
+    log("Inserted text using paste command");
 
     // Write transcription to debug file
     fs.writeFileSync(debugFilePath + ".txt", transcription);
@@ -434,33 +449,6 @@ async function stopRecording() {
     }
 
     tempFilePath = undefined;
-  }
-}
-
-async function listAudioDevices(): Promise<void> {
-  try {
-    const ffmpegPath = getFfmpegPath();
-    if (!fs.existsSync(ffmpegPath)) {
-      throw new Error(`FFmpeg not found at ${ffmpegPath}`);
-    }
-
-    log("Listing available audio devices...");
-    const args = ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"];
-
-    const process = spawn(ffmpegPath, args);
-
-    process.stderr?.on("data", (data: Buffer) => {
-      const output = data.toString().trim();
-      if (output.includes("DirectShow audio devices") || output.includes("Alternative name")) {
-        log(output);
-      }
-    });
-
-    await new Promise<void>((resolve) => {
-      process.on("exit", () => resolve());
-    });
-  } catch (error) {
-    log(`Failed to list audio devices: ${error}`, true);
   }
 }
 
@@ -568,30 +556,34 @@ async function detectAudioDevices(): Promise<AudioDevice[]> {
 }
 
 async function selectAudioDevice(): Promise<string> {
-  // Update available devices
+  // Use the cached device if available
+  if (currentAudioDevice) {
+    return currentAudioDevice.id;
+  }
+
+  // If no cached device, update available devices
   availableDevices = await detectAudioDevices();
 
   if (availableDevices.length === 0) {
     throw new Error("No audio devices found");
   }
 
-  // Get configured device from settings
+  // Get configured device name from settings
   const config = vscode.workspace.getConfiguration("whipserdictation");
-  const configuredDevice = config.get<string>("audioDevice");
+  const configuredDeviceName = config.get<string>("audioDevice");
 
-  // If a device is configured, check if it's available
-  if (configuredDevice) {
-    const device = availableDevices.find((d) => d.id === configuredDevice);
+  // If a device name is configured, check if it's available
+  if (configuredDeviceName) {
+    const device = availableDevices.find((d) => d.name === configuredDeviceName);
     if (device) {
-      log(`Using configured audio device: ${device.name}`);
+      currentAudioDevice = device;
       return device.id;
     }
-    log(`Configured device not found: ${configuredDevice}`, true);
   }
 
   // Use first available device
-  log(`Using first available audio device: ${availableDevices[0].name}`);
-  return availableDevices[0].id;
+  currentAudioDevice = availableDevices[0];
+  return currentAudioDevice.id;
 }
 
 async function promptForDeviceSelection(): Promise<void> {
@@ -617,11 +609,12 @@ async function promptForDeviceSelection(): Promise<void> {
     });
 
     if (selected) {
-      // Save to settings
+      // Save device name to settings and update current device
       const config = vscode.workspace.getConfiguration("whipserdictation");
-      await config.update("audioDevice", selected.description, vscode.ConfigurationTarget.Global);
+      await config.update("audioDevice", selected.label, vscode.ConfigurationTarget.Global);
+      currentAudioDevice = availableDevices.find((d) => d.name === selected.label);
 
-      // Update status bar to show selected device
+      // Update status bar tooltip with current device
       statusBarItem.tooltip = `Current audio device: ${selected.label}`;
 
       vscode.window.showInformationMessage(`Audio device set to: ${selected.label}`);
@@ -644,20 +637,21 @@ async function initializeAudioDevice(): Promise<void> {
       return;
     }
 
-    // Get configured device from settings
+    // Get configured device name from settings
     const config = vscode.workspace.getConfiguration("whipserdictation");
-    const configuredDevice = config.get<string>("audioDevice");
+    const configuredDeviceName = config.get<string>("audioDevice");
+
+    // Find the configured device or use the first available one
+    currentAudioDevice = availableDevices.find((d) => d.name === configuredDeviceName) || availableDevices[0];
 
     // If no device is configured, set the first available one
-    if (!configuredDevice && availableDevices.length > 0) {
-      const defaultDevice = availableDevices[0];
-      await config.update("audioDevice", defaultDevice.id, vscode.ConfigurationTarget.Global);
-      log(`Initialized default audio device: ${defaultDevice.name} (${defaultDevice.id})`);
+    if (!configuredDeviceName) {
+      await config.update("audioDevice", currentAudioDevice.name, vscode.ConfigurationTarget.Global);
+      log(`Initialized default audio device: ${currentAudioDevice.name} (${currentAudioDevice.id})`);
     }
 
     // Update status bar tooltip with current device
-    const currentDevice = availableDevices.find((d) => d.id === configuredDevice) || availableDevices[0];
-    statusBarItem.tooltip = `Current audio device: ${currentDevice.name}`;
+    statusBarItem.tooltip = `Current audio device: ${currentAudioDevice.name}`;
   } catch (error) {
     log(`Error initializing audio device: ${error}`, true);
   }

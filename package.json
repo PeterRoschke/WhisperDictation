@@ -40,11 +40,6 @@
         "title": "Whisper Dictation: Open Settings"
       },
       {
-        "command": "whipserdictation.listDevices",
-        "title": "Whisper Dictation: List Audio Devices",
-        "category": "Whisper Dictation"
-      },
-      {
         "command": "whipserdictation.selectDevice",
         "title": "Whisper Dictation: Select Audio Device",
         "category": "Whisper Dictation"
@@ -54,11 +49,6 @@
       "type": "object",
       "title": "Whisper Dictation",
       "properties": {
-        "whipserdictation.openAIApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API Key for Whisper transcription"
-        },
         "whipserdictation.language": {
           "type": "string",
           "default": "en",
@@ -223,9 +213,5 @@
     "typescript": "^5.7.2",
     "webpack": "^5.95.0",
     "webpack-cli": "^5.1.4"
-  },
-  "files": [
-    "dist/**/*",
-    "resources/bin/**/*"
-  ]
+  }
 }
