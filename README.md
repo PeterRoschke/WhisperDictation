@@ -30,6 +30,21 @@ This extension contributes the following settings:
 4. Speak clearly into your microphone
 5. Use the "Stop Dictation" command to stop recording and transcribe
 
+## Development Setup
+
+1. Clone the repository
+2. Run `npm install` to install dependencies
+3. Run `scripts/redeploy.ps1` to set up the extension locally. This script will:
+   - Install dependencies
+   - Download necessary ffmpeg binaries (if not present)
+   - Build and package the extension
+   - Install it in your VS Code/Cursor environment
+
+For subsequent development:
+
+- Use `scripts/redeploy.ps1 -InPlace` for faster redeployment without requiring a restart
+- The script automatically handles ffmpeg binaries, backing them up during clean operations
+
 ## Known Issues
 
 None at this time.
