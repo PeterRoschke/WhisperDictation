@@ -85,3 +85,4 @@ if ($InPlace) {
     Write-Host "Extension deployed. Please restart VS Code to load the new version."
     Write-Host "TIP: You can use -InPlace switch to deploy without requiring a restart."
 } 
+

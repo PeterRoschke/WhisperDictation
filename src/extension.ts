@@ -9,6 +9,7 @@ import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
 
+// Global state
 let isRecording = false;
 let recordingProcess: ReturnType<typeof spawn> | undefined;
 let statusBarItem: vscode.StatusBarItem;
@@ -17,10 +18,7 @@ let outputChannel: vscode.OutputChannel;
 let tempFilePath: string | undefined;
 let extensionContext: vscode.ExtensionContext;
 
-interface RecordingError extends Error {
-  message: string;
-}
-
+// Type definitions
 interface AudioDevice {
   name: string;
   id: string;
@@ -93,7 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.text = "$(unmute) Start Dictation";
+    statusBarItem.text = "$(mic) Start Dictation";
     statusBarItem.command = "whipserdictation.startDictation";
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
@@ -124,7 +122,7 @@ export function activate(context: vscode.ExtensionContext) {
         console.error("[WhisperDictation] Recording error:", error);
         vscode.window.showErrorMessage(`Failed to start recording: ${error instanceof Error ? error.message : String(error)}`);
         isRecording = false;
-        statusBarItem.text = "$(unmute) Start Dictation";
+        statusBarItem.text = "$(mic) Start Dictation";
       }
     });
 
@@ -239,7 +237,7 @@ async function startRecording() {
       args.splice(2, 0, "-channel_layout", "mono");
     }
 
-    log(`Starting FFmpeg with command: ${ffmpegPath} ${args.join(" ")}`);
+    //log(`Starting FFmpeg with command: ${ffmpegPath} ${args.join(" ")}`);
 
     // Start ffmpeg process
     recordingProcess = spawn(ffmpegPath, args);
@@ -256,13 +254,13 @@ async function startRecording() {
       ) {
         log(`[FFmpeg Error] ${message}`, true);
       } else {
-        log(`[FFmpeg] ${message}`);
+        //log(`[FFmpeg] ${message}`);
       }
     });
 
-    recordingProcess.stdout?.on("data", (data: Buffer) => {
-      log(`[FFmpeg stdout] ${data.toString().trim()}`);
-    });
+    // recordingProcess.stdout?.on("data", (data: Buffer) => {
+    //   log(`[FFmpeg stdout] ${data.toString().trim()}`);
+    // });
 
     recordingProcess.on("error", (err: Error) => {
       log(`FFmpeg process error: ${err.message}`, true);
@@ -342,7 +340,7 @@ async function stopRecording() {
     }
 
     isRecording = false;
-    statusBarItem.text = "$(unmute) Start Dictation";
+    statusBarItem.text = "$(mic) Start Dictation";
 
     // Create debug directory if it doesn't exist
     const debugDir = path.join(extensionContext.extensionPath, "DictationAudio");
