@@ -4,3 +4,8 @@ node_modules
 .vscode-test/
 *.vsix
 DictationAudio
+
+# Ignore ffmpeg binaries
+resources/bin/win32/ffmpeg.exe
+resources/bin/darwin/ffmpeg
+resources/bin/linux/ffmpeg
