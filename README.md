@@ -4,38 +4,58 @@ A VS Code extension that adds speech-to-text capabilities using OpenAI's Whisper
 
 ## Features
 
-- Start/stop dictation using the status bar button or commands
-- Transcribe speech to text in real-time
+- Start/stop dictation using the status bar button or keyboard shortcut
+- Transcribe speech to text using OpenAI's Whisper model
 - Support for multiple languages
-- Configurable OpenAI API key with easy update option
+- Automatic microphone selection and configuration
+- Configurable OpenAI API key with secure storage
 - Automatic handling of expired or invalid API keys
+- Debug recordings saved for troubleshooting
 
 ## Requirements
 
 - An OpenAI API key
 - A working microphone
-- A modern browser-based environment (VS Code/Cursor)
+- Windows OS (MacOS and Linux support planned)
 
 ## Extension Settings
 
 This extension contributes the following settings:
 
 - `whipserdictation.language`: Language code for transcription (e.g., 'en' for English)
+- `whipserdictation.audioDevice`: Selected audio input device (configured through UI)
 
 ## Usage
 
 1. Set your OpenAI API key:
+
    - When first using the extension, you'll be prompted to enter your API key
    - You can update your API key anytime using the "Whisper Dictation: Update OpenAI API Key" command
+   - Your API key is stored securely in the system's credential store
    - If your API key becomes invalid or expires, you'll be prompted to enter a new one
-2. Click the microphone icon in the status bar to start dictation
-3. Allow microphone access when prompted
-4. Speak clearly into your microphone
-5. Click the microphone icon again to stop recording and transcribe
+
+2. Configure your microphone:
+
+   - Click the microphone icon in the status bar or use the "Whisper Dictation: Select Audio Device" command
+   - Choose your preferred microphone from the list
+   - The selection will be saved for future use
+
+3. Start dictating:
+
+   - Click the microphone icon in the status bar or use Ctrl+Insert to start recording
+   - The icon will change to indicate recording is in progress
+   - Speak clearly into your microphone
+   - Click the icon again or use the same shortcut to stop recording
+
+4. Using the transcription:
+   - For chat windows and composers in Cursor: Text will be automatically pasted
+   - For other windows or applications: The text is automatically copied to your clipboard
+   - Simply press Ctrl+V (or Cmd+V on Mac) to paste the transcribed text anywhere
+   - A copy of the transcription is also saved in the DictationAudio folder for reference
 
 ## Available Commands
 
-- "Whisper Dictation: Start Dictation" - Start recording (also available via status bar)
+- "Whisper Dictation: Start Dictation" - Start/stop recording (Ctrl+Insert)
 - "Whisper Dictation: Stop Dictation" - Stop recording and transcribe
 - "Whisper Dictation: Update OpenAI API Key" - Update your OpenAI API key
 - "Whisper Dictation: Select Audio Device" - Choose your input device
@@ -53,15 +73,24 @@ This extension contributes the following settings:
 
 For subsequent development:
 
-- Use `scripts/redeploy.ps1 -InPlace` for faster redeployment without requiring a restart
-- The script automatically handles ffmpeg binaries, backing them up during clean operations
+- Run `scripts/redeploy.ps1` to rebuild and deploy
+- Use `scripts/redeploy.ps1 -Clean` for a clean rebuild
+- The script automatically handles ffmpeg binaries during clean operations
 
 ## Known Issues
 
-None at this time.
+- Currently Windows-only (MacOS and Linux support planned)
+- Automatic paste works only in chat and composer windows
+- For other windows, manual paste (Ctrl+V) is required
 
 ## Release Notes
 
 ### 0.0.1
 
-Initial release of WhisperDictation
+Initial release of WhisperDictation:
+
+- Speech-to-text using OpenAI Whisper
+- Automatic microphone selection
+- Multi-language support
+- Secure API key storage
+- Debug recording storage

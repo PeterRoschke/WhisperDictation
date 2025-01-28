@@ -32,6 +32,39 @@ interface AudioDevice {
 
 let availableDevices: AudioDevice[] = [];
 
+// Add reset function after the global state declarations
+function resetRecordingState() {
+  // Clear recording timer
+  if (recordingTimer) {
+    clearTimeout(recordingTimer);
+    recordingTimer = undefined;
+  }
+
+  // Kill any existing recording process
+  if (recordingProcess) {
+    try {
+      recordingProcess.kill();
+    } catch (error) {
+      log("Error killing recording process: " + error, true);
+    }
+    recordingProcess = undefined;
+  }
+
+  // Clean up temp file
+  if (tempFilePath && fs.existsSync(tempFilePath)) {
+    try {
+      fs.unlinkSync(tempFilePath);
+    } catch (error) {
+      log("Error cleaning up temp file: " + error, true);
+    }
+    tempFilePath = undefined;
+  }
+
+  // Reset recording state and status bar
+  isRecording = false;
+  statusBarItem.text = "$(mic) Start Dictation";
+}
+
 // Helper function to get the ffmpeg binary path
 function getFfmpegPath(): string {
   const platform = os.platform();
@@ -102,6 +135,9 @@ export function activate(context: vscode.ExtensionContext) {
   log("Extension path: " + context.extensionPath);
 
   try {
+    // Reset state on activation to ensure clean startup
+    resetRecordingState();
+
     // Initialize audio device
     initializeAudioDevice();
 
@@ -184,6 +220,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 async function startRecording() {
   try {
+    // Only reset if we're already recording - handles edge cases
+    if (isRecording) {
+      log("Recording already in progress, stopping current recording first");
+      await stopRecording();
+    }
+
     // Get audio device first before creating temp file to minimize delay
     const deviceId = await selectAudioDevice();
     if (!deviceId) {
@@ -284,6 +326,11 @@ async function startRecording() {
         message.includes("No such")
       ) {
         log(`[FFmpeg Error] ${message}`, true);
+        // Reset state if we detect a critical error, but not during initialization
+        if (!message.includes("dummy") && (message.includes("Could not open") || message.includes("Cannot open"))) {
+          resetRecordingState();
+          vscode.window.showErrorMessage("Failed to access audio device. Please check your microphone settings.");
+        }
       } else {
         //log(`[FFmpeg] ${message}`);
       }
@@ -308,8 +355,19 @@ async function startRecording() {
 
     // Set up error handling for the process
     const processError = await new Promise<Error | null>((resolve) => {
-      recordingProcess?.on("error", resolve);
-      recordingProcess?.on("spawn", () => resolve(null));
+      const spawnTimeout = setTimeout(() => {
+        resolve(new Error("FFmpeg process failed to start within timeout"));
+      }, 5000); // 5 second timeout for process to start
+
+      recordingProcess?.on("error", (err) => {
+        clearTimeout(spawnTimeout);
+        resolve(err);
+      });
+
+      recordingProcess?.on("spawn", () => {
+        clearTimeout(spawnTimeout);
+        resolve(null);
+      });
     });
 
     if (processError) {
@@ -326,19 +384,18 @@ async function startRecording() {
     }, 30 * 60 * 1000); // 30 minutes in milliseconds
   } catch (error) {
     log(`Failed to start recording: ${error}`, true);
+    resetRecordingState();
     throw error;
   }
 }
 
 async function stopRecording() {
-  // Clear the recording timer if it exists
-  if (recordingTimer) {
-    clearTimeout(recordingTimer);
-    recordingTimer = undefined;
-  }
-
   if (!isRecording || !recordingProcess || !tempFilePath) {
     log("Stop recording called but recording is not active");
+    // Only reset if we're in an inconsistent state
+    if (isRecording || recordingProcess || tempFilePath) {
+      resetRecordingState();
+    }
     return;
   }
 
@@ -347,18 +404,26 @@ async function stopRecording() {
     // Stop recording gracefully
     recordingProcess.stdin?.write("q");
 
-    // Wait for process to exit
+    // Wait for process to exit with better timeout handling
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         log("FFmpeg process timeout, killing forcefully");
-        recordingProcess?.kill();
+        if (recordingProcess) {
+          recordingProcess.kill("SIGKILL"); // Force kill on Windows
+        }
         resolve();
-      }, 1000);
+      }, 2000); // Increased timeout to 2 seconds for slower systems
 
       recordingProcess?.on("exit", () => {
         log("FFmpeg process exited normally");
         clearTimeout(timeout);
         resolve();
+      });
+
+      recordingProcess?.on("error", (err) => {
+        log(`Error during process exit: ${err}`, true);
+        clearTimeout(timeout);
+        resolve(); // Resolve anyway to continue cleanup
       });
     });
 
@@ -385,7 +450,7 @@ async function stopRecording() {
 
     // Create debug directory if it doesn't exist
     const debugDir = path.join(extensionContext.extensionPath, "DictationAudio");
-    log(`Debug directory path: ${debugDir}`);
+    //log(`Debug directory path: ${debugDir}`);
     if (!fs.existsSync(debugDir)) {
       log(`Creating debug directory: ${debugDir}`);
       fs.mkdirSync(debugDir);
@@ -394,12 +459,12 @@ async function stopRecording() {
     // Create debug file path
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const debugFilePath = path.join(debugDir, `dictation-${timestamp}.webm`);
-    log(`Debug file path: ${debugFilePath}`);
+    //log(`Debug file path: ${debugFilePath}`);
 
     // Copy file to debug directory
-    log(`Copying temp file to debug directory...`);
+    //log(`Copying temp file to debug directory...`);
     fs.copyFileSync(tempFilePath, debugFilePath);
-    log(`File copied successfully to: ${debugFilePath}`);
+    log(`Debug file copied successfully to: ${debugFilePath}`);
 
     if (!openai) {
       throw new Error("OpenAI client not initialized");
@@ -454,29 +519,6 @@ async function stopRecording() {
       // Try clipboard paste first
       try {
         await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
-
-        // If we have an editor, verify if the paste worked by checking content change
-        if (editor) {
-          const afterText = editor.document.getText();
-          const afterPosition = editor.selection.active;
-
-          // If text or cursor position hasn't changed, paste likely failed
-          if (beforeText === afterText && beforePosition?.isEqual(afterPosition)) {
-            // Paste didn't work, try direct editor insertion
-            await editor.edit((editBuilder) => {
-              if (editor.selection.isEmpty) {
-                editBuilder.insert(editor.selection.active, transcription);
-              } else {
-                editBuilder.replace(editor.selection, transcription);
-              }
-            });
-            log("Inserted text using editor API after paste failed");
-          } else {
-            log("Inserted text using paste command");
-          }
-        } else {
-          log("Inserted text using paste command");
-        }
       } catch (error) {
         // If paste command fails and we have an editor, try direct insertion
         if (editor) {
@@ -522,26 +564,7 @@ async function stopRecording() {
     log("Transcription error: " + (error instanceof Error ? error.message : String(error)), true);
     vscode.window.showErrorMessage(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    // Clean up temp file
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-      } catch (error) {
-        console.error("Failed to clean up temp file:", error);
-      }
-    }
-
-    // Clean up recording process
-    if (recordingProcess) {
-      try {
-        recordingProcess.kill();
-      } catch (error) {
-        console.error("Failed to kill recording process:", error);
-      }
-      recordingProcess = undefined;
-    }
-
-    tempFilePath = undefined;
+    resetRecordingState();
   }
 }
 
@@ -681,6 +704,12 @@ async function selectAudioDevice(): Promise<string> {
 
 async function promptForDeviceSelection(): Promise<void> {
   try {
+    // Only reset if currently recording
+    if (isRecording) {
+      log("Recording in progress, stopping before device switch");
+      await stopRecording();
+    }
+
     // Update available devices
     availableDevices = await detectAudioDevices();
 

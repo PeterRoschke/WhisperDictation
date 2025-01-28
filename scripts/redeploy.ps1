@@ -1,5 +1,5 @@
 param(
-    [switch]$InPlace = $false
+    [switch]$Clean = $false
 )
 
 # Stop on any error
@@ -7,82 +7,121 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Starting extension redeployment..." -ForegroundColor Cyan
 
-# Uninstall existing extension
-Write-Host "Uninstalling existing extension..." -ForegroundColor Yellow
-try {
-    cursor --uninstall-extension undefined_publisher.whipserdictation
-} catch {
-    Write-Host "Extension not installed, continuing..." -ForegroundColor Yellow
-}
+# Only clean if explicitly requested
+if ($Clean) {
+    # Clean build artifacts but preserve FFmpeg binaries
+    Write-Host "Cleaning build artifacts..." -ForegroundColor Yellow
+    # Windows-specific FFmpeg path
+    $ffmpegDir = Join-Path $PSScriptRoot "..\resources\bin\win32"
+    $tempFFmpegDir = Join-Path $env:TEMP "ffmpeg-backup"
 
-# Clean build artifacts but preserve FFmpeg binaries
-Write-Host "Cleaning build artifacts..." -ForegroundColor Yellow
-$ffmpegDir = Join-Path $PSScriptRoot "resources\bin"
-$tempFFmpegDir = Join-Path $env:TEMP "ffmpeg-backup"
-
-# Backup FFmpeg binaries if they exist
-if (Test-Path $ffmpegDir) {
-    Write-Host "Backing up FFmpeg binaries..." -ForegroundColor Yellow
-    Copy-Item -Path $ffmpegDir -Destination $tempFFmpegDir -Recurse -Force
-}
-
-if (Test-Path "dist") {
-    Remove-Item -Recurse -Force "dist"
-}
-if (Test-Path "*.vsix") {
-    Remove-Item -Force "*.vsix"
-}
-
-# Install dependencies and build
-Write-Host "Installing dependencies..." -ForegroundColor Yellow
-npm install
-
-# Restore FFmpeg binaries
-if (Test-Path $tempFFmpegDir) {
-    Write-Host "Restoring FFmpeg binaries..." -ForegroundColor Yellow
-    if (-not (Test-Path $ffmpegDir)) {
-        New-Item -ItemType Directory -Force -Path $ffmpegDir | Out-Null
+    # Note: When creating MacOS/Linux installers, follow this pattern but use:
+    # MacOS: "..\resources\bin\darwin"
+    # Linux: "..\resources\bin\linux"
+    
+    # Backup FFmpeg binaries if they exist
+    if (Test-Path $ffmpegDir) {
+        Write-Host "Backing up FFmpeg binaries..." -ForegroundColor Yellow
+        Copy-Item -Path $ffmpegDir -Destination $tempFFmpegDir -Recurse -Force
     }
-    Copy-Item -Path "$tempFFmpegDir\*" -Destination $ffmpegDir -Recurse -Force
-    Remove-Item -Path $tempFFmpegDir -Recurse -Force
-} else {
-    # Download FFmpeg if not present
+
+    # Clean dist and vsix files
+    if (Test-Path "dist") {
+        Remove-Item -Recurse -Force "dist"
+    }
+    if (Test-Path "*.vsix") {
+        Remove-Item -Force "*.vsix"
+    }
+
+    # Restore FFmpeg binaries
+    if (Test-Path $tempFFmpegDir) {
+        Write-Host "Restoring FFmpeg binaries..." -ForegroundColor Yellow
+        if (-not (Test-Path $ffmpegDir)) {
+            New-Item -ItemType Directory -Force -Path $ffmpegDir | Out-Null
+        }
+        Copy-Item -Path "$tempFFmpegDir\*" -Destination $ffmpegDir -Recurse -Force
+        Remove-Item -Path $tempFFmpegDir -Recurse -Force
+    }
+}
+
+# Install dependencies if node_modules doesn't exist
+if (-not (Test-Path "node_modules")) {
+    Write-Host "Installing dependencies..." -ForegroundColor Yellow
+    npm install --no-audit --no-fund
+}
+
+# Download FFmpeg if not present (Windows only)
+# Note: For MacOS/Linux installers, create similar scripts that download the appropriate binaries
+# Example paths:
+# MacOS: "..\resources\bin\darwin\ffmpeg"
+# Linux: "..\resources\bin\linux\ffmpeg"
+if (-not (Test-Path (Join-Path $PSScriptRoot "..\resources\bin\win32\ffmpeg.exe"))) {
     Write-Host "Downloading FFmpeg binaries..." -ForegroundColor Yellow
     npm run download-ffmpeg
 }
 
-Write-Host "Building extension..." -ForegroundColor Yellow
-npm run compile
+# Build and package in one step (avoids running webpack twice)
+Write-Host "Building and packaging extension..." -ForegroundColor Yellow
+npm run package
 
-Write-Host "Packaging extension..." -ForegroundColor Yellow
-npx vsce package --allow-missing-repository --no-dependencies --no-yarn
+# Get the extension installation path
+$extensionName = "local-publisher.whipserdictation"
+$extensionDir = Join-Path $env:USERPROFILE ".vscode-insiders\extensions\$extensionName"
+$cursorExtensionDir = Join-Path $env:USERPROFILE ".cursor\extensions\$extensionName"
 
-# Install the extension
-Write-Host "Installing extension..." -ForegroundColor Yellow
-$vsixFile = Get-ChildItem -Filter "*.vsix" | Select-Object -First 1
-if ($vsixFile) {
-    cursor --install-extension $vsixFile.Name
-    Write-Host "Extension redeployed successfully!" -ForegroundColor Green
+# Function to deploy to a specific directory
+function Deploy-Extension {
+    param (
+        [string]$targetDir
+    )
     
-    if ($InPlace) {
-        Write-Host "Press Ctrl+R Ctrl+R in VS Code to reload the window." -ForegroundColor Yellow
-    } else {
-        Write-Host "Please restart Cursor to load the updated extension." -ForegroundColor Yellow
+    if (Test-Path $targetDir) {
+        Write-Host "Removing existing extension from $targetDir..." -ForegroundColor Yellow
+        # Use robocopy to empty the directory - this is more reliable with file locks
+        robocopy /MIR $env:TEMP\empty_dir $targetDir | Out-Null
+        Remove-Item -Path $targetDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-} else {
-    Write-Host "Failed to find .vsix file!" -ForegroundColor Red
-    exit 1
+
+    Write-Host "Installing extension to $targetDir..." -ForegroundColor Yellow
+    $vsixFile = Get-ChildItem -Filter "*.vsix" | Select-Object -First 1
+    if (-not $vsixFile) {
+        Write-Host "Failed to find .vsix file!" -ForegroundColor Red
+        exit 1
+    }
+
+    # Create a temporary zip file from the vsix
+    $tempZip = Join-Path $env:TEMP "temp_extension.zip"
+    Copy-Item -Path $vsixFile.FullName -Destination $tempZip -Force
+
+    try {
+        # Create target directory if it doesn't exist
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+
+        # Extract the zip to the extension directory
+        Expand-Archive -Path $tempZip -DestinationPath $targetDir -Force
+
+        # Clean up temp zip
+        Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Host "Error deploying extension: $_" -ForegroundColor Red
+        if (Test-Path $tempZip) {
+            Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+        }
+        exit 1
+    }
 }
 
-Write-Host "Deploying extension..."
-$extensionPath = "$env:USERPROFILE\.vscode\extensions\whisperdictation"
-Remove-Item -Path $extensionPath -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item -Path "." -Destination $extensionPath -Recurse
+# Deploy to both VS Code Insiders and Cursor locations
+Deploy-Extension $extensionDir
+Deploy-Extension $cursorExtensionDir
 
-if ($InPlace) {
-    Write-Host "Extension deployed. Press Ctrl+R Ctrl+R in VS Code to reload the window."
-} else {
-    Write-Host "Extension deployed. Please restart VS Code to load the new version."
-    Write-Host "TIP: You can use -InPlace switch to deploy without requiring a restart."
-} 
+Write-Host "Extension deployed successfully!" -ForegroundColor Green
+Write-Host "To reload the extension:" -ForegroundColor Yellow
+Write-Host "1. Open the Command Palette (Ctrl+Shift+P)" -ForegroundColor Yellow
+Write-Host "2. Type 'Developer: Reload Extension' and press Enter" -ForegroundColor Yellow
+Write-Host "   OR" -ForegroundColor Yellow
+Write-Host "3. Type 'Reload Window' to reload the entire window if needed" -ForegroundColor Yellow 
 
