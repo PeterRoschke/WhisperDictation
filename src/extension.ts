@@ -3,7 +3,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
-import OpenAI from "openai";Testing one more time.
+import OpenAI from "openai";
 
 import * as fs from "fs";
 import * as path from "path";
@@ -11,7 +11,7 @@ import * as os from "os";
 import { spawn } from "child_process";
 
 // Global state
-let isRecording = false;time.
+let isRecording = false;
 
 let recordingProcess: ReturnType<typeof spawn> | undefined;
 let statusBarItem: vscode.StatusBarItem;
@@ -56,7 +56,6 @@ async function promptForApiKey() {
   const action = await vscode.window.showInformationMessage("OpenAI API key not configured. Please enter your API key.", "Enter API Key");
 
   if (action === "Enter API Key") {
-Peace. War.
     return updateApiKey();
   }
 }
@@ -498,8 +497,6 @@ async function stopRecording() {
 
       // Write transcription to debug file
       fs.writeFileSync(debugFilePath + ".txt", transcription);
-Bye.
-Oh.
     } catch (apiError) {
       // Check specifically for API key related errors
       const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
