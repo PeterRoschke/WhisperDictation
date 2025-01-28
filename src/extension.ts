@@ -3,14 +3,16 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
-import OpenAI from "openai";
+import OpenAI from "openai";Testing one more time.
+
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
 
 // Global state
-let isRecording = false;
+let isRecording = false;time.
+
 let recordingProcess: ReturnType<typeof spawn> | undefined;
 let statusBarItem: vscode.StatusBarItem;
 let openai: OpenAI | undefined;
@@ -54,19 +56,26 @@ async function promptForApiKey() {
   const action = await vscode.window.showInformationMessage("OpenAI API key not configured. Please enter your API key.", "Enter API Key");
 
   if (action === "Enter API Key") {
-    const apiKey = await vscode.window.showInputBox({
-      prompt: "Enter your OpenAI API key",
-      password: true,
-      placeHolder: "sk-...",
-    });
-
-    if (apiKey) {
-      await extensionContext.secrets.store(OPENAI_API_KEY_SECRET, apiKey);
-      // Initialize OpenAI client with the new key
-      openai = new OpenAI({ apiKey });
-      vscode.window.showInformationMessage("API key saved securely");
-    }
+Peace. War.
+    return updateApiKey();
   }
+}
+
+async function updateApiKey() {
+  const apiKey = await vscode.window.showInputBox({
+    prompt: "Enter your OpenAI API key",
+    password: true,
+    placeHolder: "sk-...",
+  });
+
+  if (apiKey) {
+    await extensionContext.secrets.store(OPENAI_API_KEY_SECRET, apiKey);
+    // Initialize OpenAI client with the new key
+    openai = new OpenAI({ apiKey });
+    vscode.window.showInformationMessage("API key saved securely");
+    return true;
+  }
+  return false;
 }
 
 // Helper function for logging
@@ -101,6 +110,10 @@ export function activate(context: vscode.ExtensionContext) {
     let openSettingsCmd = vscode.commands.registerCommand("whipserdictation.openSettings", openSettings);
     context.subscriptions.push(openSettingsCmd);
 
+    // Register update API key command
+    let updateApiKeyCmd = vscode.commands.registerCommand("whipserdictation.updateApiKey", updateApiKey);
+    context.subscriptions.push(updateApiKeyCmd);
+
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.text = "$(mic) Start Dictation";
@@ -131,6 +144,15 @@ export function activate(context: vscode.ExtensionContext) {
         await startRecording();
       } catch (error) {
         console.error("[WhisperDictation] Recording error:", error);
+        // Check for unauthorized error
+        if (
+          error instanceof Error &&
+          (error.message.toLowerCase().includes("unauthorized") || error.message.toLowerCase().includes("invalid api key"))
+        ) {
+          log("Invalid or expired API key detected", true);
+          await promptForApiKey();
+          return;
+        }
         vscode.window.showErrorMessage(`Failed to start recording: ${error instanceof Error ? error.message : String(error)}`);
         isRecording = false;
         statusBarItem.text = "$(mic) Start Dictation";
@@ -407,24 +429,98 @@ async function stopRecording() {
 
     // Call Whisper API
     const config = vscode.workspace.getConfiguration("whipserdictation");
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioStream,
-      model: "whisper-1",
-      language: config.get<string>("language") || "en",
-      response_format: "text",
-    });
+    try {
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioStream,
+        model: "whisper-1",
+        language: config.get<string>("language") || "en",
+        response_format: "text",
+      });
 
-    console.log("[WhisperDictation] Transcription successful, length:", transcription.length);
+      console.log("[WhisperDictation] Transcription successful, length:", transcription.length);
 
-    // Simplified text insertion using clipboard
-    await vscode.env.clipboard.writeText(transcription);
-    await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
-    log("Inserted text using paste command");
+      // Copy to clipboard first
+      await vscode.env.clipboard.writeText(transcription);
 
-    // Write transcription to debug file
-    fs.writeFileSync(debugFilePath + ".txt", transcription);
+      // Try to detect the active editor's content before paste
+      const editor = vscode.window.activeTextEditor;
+      let beforeText = "";
+      let beforePosition: vscode.Position | undefined;
 
-    //vscode.window.showInformationMessage("Transcription complete!");
+      if (editor) {
+        beforeText = editor.document.getText();
+        beforePosition = editor.selection.active;
+      }
+
+      // Try clipboard paste first
+      try {
+        await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
+
+        // If we have an editor, verify if the paste worked by checking content change
+        if (editor) {
+          const afterText = editor.document.getText();
+          const afterPosition = editor.selection.active;
+
+          // If text or cursor position hasn't changed, paste likely failed
+          if (beforeText === afterText && beforePosition?.isEqual(afterPosition)) {
+            // Paste didn't work, try direct editor insertion
+            await editor.edit((editBuilder) => {
+              if (editor.selection.isEmpty) {
+                editBuilder.insert(editor.selection.active, transcription);
+              } else {
+                editBuilder.replace(editor.selection, transcription);
+              }
+            });
+            log("Inserted text using editor API after paste failed");
+          } else {
+            log("Inserted text using paste command");
+          }
+        } else {
+          log("Inserted text using paste command");
+        }
+      } catch (error) {
+        // If paste command fails and we have an editor, try direct insertion
+        if (editor) {
+          await editor.edit((editBuilder) => {
+            if (editor.selection.isEmpty) {
+              editBuilder.insert(editor.selection.active, transcription);
+            } else {
+              editBuilder.replace(editor.selection, transcription);
+            }
+          });
+          log("Inserted text using editor API after paste failed");
+        } else {
+          // Both methods failed, show clipboard message
+          log(`Text insertion failed: ${error}`, true);
+          vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
+        }
+      }
+
+      // Write transcription to debug file
+      fs.writeFileSync(debugFilePath + ".txt", transcription);
+Bye.
+Oh.
+    } catch (apiError) {
+      // Check specifically for API key related errors
+      const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
+      if (
+        errorMessage.includes("401") ||
+        errorMessage.toLowerCase().includes("api key") ||
+        errorMessage.toLowerCase().includes("unauthorized")
+      ) {
+        log("Invalid API key detected during transcription", true);
+        vscode.window
+          .showErrorMessage("Invalid or expired OpenAI API key detected. Please update your API key.", "Update API Key")
+          .then((selection) => {
+            if (selection === "Update API Key") {
+              updateApiKey();
+            }
+          });
+        return;
+      }
+      // Re-throw other API errors
+      throw apiError;
+    }
   } catch (error) {
     log("Transcription error: " + (error instanceof Error ? error.message : String(error)), true);
     vscode.window.showErrorMessage(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`);

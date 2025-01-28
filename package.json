@@ -43,6 +43,11 @@
         "command": "whipserdictation.selectDevice",
         "title": "Whisper Dictation: Select Audio Device",
         "category": "Whisper Dictation"
+      },
+      {
+        "command": "whipserdictation.updateApiKey",
+        "title": "Whisper Dictation: Update OpenAI API Key",
+        "category": "Whisper Dictation"
       }
     ],
     "configuration": {

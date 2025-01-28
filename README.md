@@ -4,10 +4,11 @@ A VS Code extension that adds speech-to-text capabilities using OpenAI's Whisper
 
 ## Features
 
-- Start/stop dictation using keyboard shortcuts or commands
+- Start/stop dictation using the status bar button or commands
 - Transcribe speech to text in real-time
 - Support for multiple languages
-- Configurable OpenAI API key
+- Configurable OpenAI API key with easy update option
+- Automatic handling of expired or invalid API keys
 
 ## Requirements
 
@@ -19,16 +20,26 @@ A VS Code extension that adds speech-to-text capabilities using OpenAI's Whisper
 
 This extension contributes the following settings:
 
-- `whipserdictation.openAIApiKey`: Your OpenAI API key
 - `whipserdictation.language`: Language code for transcription (e.g., 'en' for English)
 
 ## Usage
 
-1. Set your OpenAI API key in the settings (use the "Whisper Dictation: Open Settings" command)
-2. Press `Ctrl+Insert` (Windows/Linux) or `Cmd+Insert` (Mac) to start dictation
+1. Set your OpenAI API key:
+   - When first using the extension, you'll be prompted to enter your API key
+   - You can update your API key anytime using the "Whisper Dictation: Update OpenAI API Key" command
+   - If your API key becomes invalid or expires, you'll be prompted to enter a new one
+2. Click the microphone icon in the status bar to start dictation
 3. Allow microphone access when prompted
 4. Speak clearly into your microphone
-5. Use the "Stop Dictation" command to stop recording and transcribe
+5. Click the microphone icon again to stop recording and transcribe
+
+## Available Commands
+
+- "Whisper Dictation: Start Dictation" - Start recording (also available via status bar)
+- "Whisper Dictation: Stop Dictation" - Stop recording and transcribe
+- "Whisper Dictation: Update OpenAI API Key" - Update your OpenAI API key
+- "Whisper Dictation: Select Audio Device" - Choose your input device
+- "Whisper Dictation: Open Settings" - Open extension settings
 
 ## Development Setup
 
