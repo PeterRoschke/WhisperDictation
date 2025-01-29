@@ -62,7 +62,9 @@ function resetRecordingState() {
 
   // Reset recording state and status bar
   isRecording = false;
-  statusBarItem.text = "$(mic) Start Dictation";
+  if (statusBarItem) {
+    statusBarItem.text = "$(mic) Start Dictation";
+  }
 }
 
 // Helper function to get the ffmpeg binary path

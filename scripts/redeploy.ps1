@@ -121,7 +121,5 @@ Deploy-Extension $cursorExtensionDir
 Write-Host "Extension deployed successfully!" -ForegroundColor Green
 Write-Host "To reload the extension:" -ForegroundColor Yellow
 Write-Host "1. Open the Command Palette (Ctrl+Shift+P)" -ForegroundColor Yellow
-Write-Host "2. Type 'Developer: Reload Extension' and press Enter" -ForegroundColor Yellow
-Write-Host "   OR" -ForegroundColor Yellow
-Write-Host "3. Type 'Reload Window' to reload the entire window if needed" -ForegroundColor Yellow 
+Write-Host "2. Type 'Reload Window' to reload the entire window if needed" -ForegroundColor Yellow 
 

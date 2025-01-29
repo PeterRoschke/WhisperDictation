@@ -20,11 +20,6 @@
       "supported": true
     }
   },
-  "webview": {
-    "allow": {
-      "microphone": true
-    }
-  },
   "contributes": {
     "commands": [
       {
