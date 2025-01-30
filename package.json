@@ -1,18 +1,22 @@
 {
-  "name": "whipserdictation",
-  "displayName": "WhipserDictation",
-  "description": "Add Whiesper Speech to Text typing to VSCode",
-  "version": "0.0.1",
+  "name": "whisperdictation",
+  "displayName": "WhisperDictation",
+  "description": "Add Whisper Speech to Text typing to VSCode",
+  "version": "0.0.6",
   "publisher": "local-publisher",
   "license": "MIT",
-  "engines": {
-    "vscode": "^1.93.0"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PeterRoschke/WhisperDictation.git"
   },
-  "categories": [
-    "Other"
-  ],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
   "activationEvents": [
     "onStartupFinished"
+  ],
+  "categories": [
+    "Other"
   ],
   "main": "./dist/extension.js",
   "capabilities": {
@@ -23,24 +27,24 @@
   "contributes": {
     "commands": [
       {
-        "command": "whipserdictation.startDictation",
+        "command": "whisperdictation.startDictation",
         "title": "Start Dictation"
       },
       {
-        "command": "whipserdictation.stopDictation",
+        "command": "whisperdictation.stopDictation",
         "title": "Stop Dictation"
       },
       {
-        "command": "whipserdictation.openSettings",
+        "command": "whisperdictation.openSettings",
         "title": "Whisper Dictation: Open Settings"
       },
       {
-        "command": "whipserdictation.selectDevice",
+        "command": "whisperdictation.selectDevice",
         "title": "Whisper Dictation: Select Audio Device",
         "category": "Whisper Dictation"
       },
       {
-        "command": "whipserdictation.updateApiKey",
+        "command": "whisperdictation.updateApiKey",
         "title": "Whisper Dictation: Update OpenAI API Key",
         "category": "Whisper Dictation"
       }
@@ -49,7 +53,7 @@
       "type": "object",
       "title": "Whisper Dictation",
       "properties": {
-        "whipserdictation.language": {
+        "whisperdictation.language": {
           "type": "string",
           "default": "en",
           "enum": [
@@ -174,7 +178,7 @@
           ],
           "description": "Language code for transcription"
         },
-        "whipserdictation.audioDevice": {
+        "whisperdictation.audioDevice": {
           "type": "string",
           "default": "",
           "description": "Audio input device to use for recording",
@@ -185,7 +189,7 @@
     },
     "keybindings": [
       {
-        "command": "whipserdictation.startDictation",
+        "command": "whisperdictation.startDictation",
         "key": "ctrl+insert",
         "mac": "cmd+insert",
         "when": "true"
@@ -193,7 +197,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "webpack --mode production --devtool hidden-source-map",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
@@ -205,9 +209,10 @@
   },
   "devDependencies": {
     "@types/node": "20.x",
-    "@types/vscode": "^1.93.0",
+    "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
+    "@vscode/vsce": "^2.24.0",
     "eslint": "^9.16.0",
     "ts-loader": "^9.5.1",
     "typescript": "^5.7.2",

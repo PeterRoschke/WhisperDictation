@@ -84,7 +84,7 @@ function getFfmpegPath(): string {
 }
 
 async function openSettings() {
-  await vscode.commands.executeCommand("workbench.action.openSettings", "whipserdictation");
+  await vscode.commands.executeCommand("workbench.action.openSettings", "whisperdictation");
 }
 
 async function promptForApiKey() {
@@ -124,99 +124,69 @@ function log(message: string, error: boolean = false) {
   }
 }
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-  extensionContext = context;
-
-  // Create output channel
-  outputChannel = vscode.window.createOutputChannel("WhisperDictation");
-  context.subscriptions.push(outputChannel);
-
-  log("Extension activation started");
-  log("Extension path: " + context.extensionPath);
-
+// Add activation logging
+export async function activate(context: vscode.ExtensionContext) {
   try {
-    // Reset state on activation to ensure clean startup
-    resetRecordingState();
+    // Create output channel first for logging
+    outputChannel = vscode.window.createOutputChannel("WhisperDictation");
+    log("Extension activation started.  Code version 2025-01-30.2");
+    log(`Extension path: ${context.extensionPath}`);
+    log(`OS platform: ${os.platform()}`);
+    log(`OS release: ${os.release()}`);
+    log(`Process versions: ${JSON.stringify(process.versions, null, 2)}`);
 
-    // Initialize audio device
-    initializeAudioDevice();
+    // Store context
+    extensionContext = context;
 
-    // Register settings command
-    let openSettingsCmd = vscode.commands.registerCommand("whipserdictation.openSettings", openSettings);
-    context.subscriptions.push(openSettingsCmd);
+    // Try to initialize OpenAI client with existing API key
+    const existingApiKey = await context.secrets.get(OPENAI_API_KEY_SECRET);
+    if (existingApiKey) {
+      log("Found existing API key, initializing OpenAI client");
+      openai = new OpenAI({ apiKey: existingApiKey });
+    } else {
+      log("No API key found, will prompt user when needed");
+    }
 
-    // Register update API key command
-    let updateApiKeyCmd = vscode.commands.registerCommand("whipserdictation.updateApiKey", updateApiKey);
-    context.subscriptions.push(updateApiKeyCmd);
-
-    // Create status bar item
+    // Initialize status bar
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.text = "$(mic) Start Dictation";
-    statusBarItem.command = "whipserdictation.startDictation";
+    statusBarItem.command = "whisperdictation.startDictation";
     statusBarItem.show();
-    context.subscriptions.push(statusBarItem);
+    log("Status bar initialized");
 
-    let startDictationCmd = vscode.commands.registerCommand("whipserdictation.startDictation", async () => {
-      try {
+    // Register commands
+    context.subscriptions.push(
+      vscode.commands.registerCommand("whisperdictation.startDictation", async () => {
+        log("Start dictation command triggered");
+        if (!isRecording) {
+          await startRecording();
+        }
+      }),
+      vscode.commands.registerCommand("whisperdictation.stopDictation", async () => {
+        log("Stop dictation command triggered");
         if (isRecording) {
           await stopRecording();
-          return;
         }
+      }),
+      vscode.commands.registerCommand("whisperdictation.openSettings", async () => {
+        log("Open settings command triggered");
+        await openSettings();
+      }),
+      vscode.commands.registerCommand("whisperdictation.selectDevice", async () => {
+        log("Select device command triggered");
+        await promptForDeviceSelection();
+      }),
+      vscode.commands.registerCommand("whisperdictation.updateApiKey", async () => {
+        log("Update API key command triggered");
+        await updateApiKey();
+      })
+    );
 
-        // Check API key from secure storage
-        const apiKey = await extensionContext.secrets.get(OPENAI_API_KEY_SECRET);
-        if (!apiKey) {
-          await promptForApiKey();
-          return;
-        }
-
-        // Initialize OpenAI if needed
-        if (!openai) {
-          openai = new OpenAI({ apiKey });
-        }
-
-        // Initialize audio recorder
-        await startRecording();
-      } catch (error) {
-        console.error("[WhisperDictation] Recording error:", error);
-        // Check for unauthorized error
-        if (
-          error instanceof Error &&
-          (error.message.toLowerCase().includes("unauthorized") || error.message.toLowerCase().includes("invalid api key"))
-        ) {
-          log("Invalid or expired API key detected", true);
-          await promptForApiKey();
-          return;
-        }
-        vscode.window.showErrorMessage(`Failed to start recording: ${error instanceof Error ? error.message : String(error)}`);
-        isRecording = false;
-        statusBarItem.text = "$(mic) Start Dictation";
-      }
-    });
-
-    let stopDictationCmd = vscode.commands.registerCommand("whipserdictation.stopDictation", stopRecording);
-
-    let selectDeviceCmd = vscode.commands.registerCommand("whipserdictation.selectDevice", promptForDeviceSelection);
-
-    context.subscriptions.push(startDictationCmd);
-    context.subscriptions.push(stopDictationCmd);
-    context.subscriptions.push(selectDeviceCmd);
-
-    // Verify command registration
-    vscode.commands.getCommands(true).then((commands) => {
-      console.log("[WhisperDictation] All registered commands after activation:", commands);
-      console.log("[WhisperDictation] Checking if our commands are registered:");
-      console.log("startDictation registered:", commands.includes("whipserdictation.startDictation"));
-      console.log("stopDictation registered:", commands.includes("whipserdictation.stopDictation"));
-      console.log("selectDevice registered:", commands.includes("whipserdictation.selectDevice"));
-    });
-
-    log("Extension successfully activated");
+    log("Commands registered");
+    log("Extension activation completed successfully");
   } catch (error) {
-    log("Activation error: " + (error instanceof Error ? error.message : String(error)), true);
-    throw error; // Re-throw to ensure VS Code sees the activation failure
+    log(`Error during activation: ${error}`, true);
+    throw error;
   }
 }
 
@@ -312,6 +282,7 @@ async function startRecording() {
 
     // Update status bar before starting recording to minimize perceived delay
     statusBarItem.text = "$(record) Recording... Click to Stop";
+    statusBarItem.command = "whisperdictation.stopDictation";
     isRecording = true;
 
     // Start ffmpeg process
@@ -449,10 +420,23 @@ async function stopRecording() {
 
     isRecording = false;
     statusBarItem.text = "$(mic) Start Dictation";
+    statusBarItem.command = "whisperdictation.startDictation";
+
+    // Check OpenAI client and API key before proceeding
+    if (!openai) {
+      log("OpenAI client not initialized, prompting for API key", true);
+      const keyUpdated = await promptForApiKey();
+      if (!keyUpdated) {
+        throw new Error("OpenAI API key required for transcription");
+      }
+      // Verify the client was initialized after key update
+      if (!openai) {
+        throw new Error("Failed to initialize OpenAI client");
+      }
+    }
 
     // Create debug directory if it doesn't exist
     const debugDir = path.join(extensionContext.extensionPath, "DictationAudio");
-    //log(`Debug directory path: ${debugDir}`);
     if (!fs.existsSync(debugDir)) {
       log(`Creating debug directory: ${debugDir}`);
       fs.mkdirSync(debugDir);
@@ -461,16 +445,8 @@ async function stopRecording() {
     // Create debug file path
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const debugFilePath = path.join(debugDir, `dictation-${timestamp}.webm`);
-    //log(`Debug file path: ${debugFilePath}`);
-
-    // Copy file to debug directory
-    //log(`Copying temp file to debug directory...`);
     fs.copyFileSync(tempFilePath, debugFilePath);
     log(`Debug file copied successfully to: ${debugFilePath}`);
-
-    if (!openai) {
-      throw new Error("OpenAI client not initialized");
-    }
 
     // Create a readable stream from the temp file
     const audioStream = fs.createReadStream(tempFilePath);
@@ -493,9 +469,10 @@ async function stopRecording() {
         )
     );
 
-    // Call Whisper API
-    const config = vscode.workspace.getConfiguration("whipserdictation");
+    // Call Whisper API with better error handling
+    const config = vscode.workspace.getConfiguration("whisperdictation");
     try {
+      log("Starting transcription with Whisper API...");
       const transcription = await openai.audio.transcriptions.create({
         file: audioStream,
         model: "whisper-1",
@@ -503,7 +480,7 @@ async function stopRecording() {
         response_format: "text",
       });
 
-      console.log("[WhisperDictation] Transcription successful, length:", transcription.length);
+      log("Transcription successful, length: " + transcription.length);
 
       // Copy to clipboard first
       await vscode.env.clipboard.writeText(transcription);
@@ -544,27 +521,31 @@ async function stopRecording() {
     } catch (apiError) {
       // Check specifically for API key related errors
       const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
+      log(`API Error: ${errorMessage}`, true);
+
       if (
         errorMessage.includes("401") ||
         errorMessage.toLowerCase().includes("api key") ||
-        errorMessage.toLowerCase().includes("unauthorized")
+        errorMessage.toLowerCase().includes("unauthorized") ||
+        errorMessage.toLowerCase().includes("invalid")
       ) {
-        log("Invalid API key detected during transcription", true);
-        vscode.window
-          .showErrorMessage("Invalid or expired OpenAI API key detected. Please update your API key.", "Update API Key")
-          .then((selection) => {
-            if (selection === "Update API Key") {
-              updateApiKey();
-            }
-          });
+        log("API key validation failed, prompting for update", true);
+        const response = await vscode.window.showErrorMessage(
+          "Invalid or expired OpenAI API key. Please update your API key.",
+          "Update API Key"
+        );
+        if (response === "Update API Key") {
+          await updateApiKey();
+        }
         return;
       }
-      // Re-throw other API errors
-      throw apiError;
+      // Re-throw other API errors with more context
+      throw new Error(`Whisper API error: ${errorMessage}`);
     }
   } catch (error) {
-    log("Transcription error: " + (error instanceof Error ? error.message : String(error)), true);
-    vscode.window.showErrorMessage(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`Transcription error: ${errorMessage}`, true);
+    vscode.window.showErrorMessage(`Transcription failed: ${errorMessage}`);
   } finally {
     resetRecordingState();
   }
@@ -687,7 +668,7 @@ async function selectAudioDevice(): Promise<string> {
   }
 
   // Get configured device name from settings
-  const config = vscode.workspace.getConfiguration("whipserdictation");
+  const config = vscode.workspace.getConfiguration("whisperdictation");
   const configuredDeviceName = config.get<string>("audioDevice");
 
   // If a device name is configured, check if it's available
@@ -734,7 +715,7 @@ async function promptForDeviceSelection(): Promise<void> {
 
     if (selected) {
       // Save device name to settings and update current device
-      const config = vscode.workspace.getConfiguration("whipserdictation");
+      const config = vscode.workspace.getConfiguration("whisperdictation");
       await config.update("audioDevice", selected.label, vscode.ConfigurationTarget.Global);
       currentAudioDevice = availableDevices.find((d) => d.name === selected.label);
 
@@ -762,7 +743,7 @@ async function initializeAudioDevice(): Promise<void> {
     }
 
     // Get configured device name from settings
-    const config = vscode.workspace.getConfiguration("whipserdictation");
+    const config = vscode.workspace.getConfiguration("whisperdictation");
     const configuredDeviceName = config.get<string>("audioDevice");
 
     // Find the configured device or use the first available one
