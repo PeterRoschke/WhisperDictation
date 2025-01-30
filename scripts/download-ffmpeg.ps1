@@ -1,77 +1,131 @@
-# Download and setup FFmpeg binaries for the extension
+# Download and setup FFmpeg binaries for all platforms
 $ErrorActionPreference = "Stop"
 
-# Create directories if they don't exist
+# Configuration
+$ffmpegBuilds = @{
+    win32 = @{
+        url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n6.1-latest-win64-gpl-6.1.zip"
+        exeName = "ffmpeg.exe"
+        archiveType = "zip"
+    }
+    darwin = @{
+        url = "https://evermeet.cx/ffmpeg/ffmpeg-6.1.zip"
+        exeName = "ffmpeg"
+        archiveType = "zip"
+    }
+    linux = @{
+        url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n6.1-latest-linux64-gpl-6.1.tar.xz"
+        exeName = "ffmpeg"
+        archiveType = "tar.xz"
+    }
+}
+
+# Setup directories
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Split-Path -Parent $scriptDir
 $binDir = Join-Path $rootDir "resources\bin"
-$win32Dir = Join-Path $binDir "win32"
 $cacheDir = Join-Path $env:LOCALAPPDATA "WhisperDictation\cache"
 
-# Note: For MacOS/Linux installers, you would create these directories:
-# $darwinDir = Join-Path $binDir "darwin"  # For MacOS
-# $linuxDir = Join-Path $binDir "linux"    # For Linux
-
-# Create directories
-New-Item -ItemType Directory -Force -Path $win32Dir | Out-Null
+# Create cache directory
 New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
-# Define FFmpeg build for Windows
-# Note: For MacOS/Linux installers, add similar configurations following this pattern
-$ffmpegBuild = @{
-    url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n6.1-latest-win64-gpl-6.1.zip"
-    exeName = "ffmpeg.exe"
-    cached = Join-Path $cacheDir "ffmpeg-win32.zip"
-    dest = Join-Path $win32Dir "ffmpeg.exe"
+# Function to download file if not in cache
+function Download-File {
+    param (
+        [string]$url,
+        [string]$output
+    )
+    if (-not (Test-Path $output)) {
+        Write-Host "Downloading from $url..."
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($url, $output)
+    } else {
+        Write-Host "Using cached file: $output"
+    }
 }
 
-# Example configurations for other platforms (commented out):
-# MacOS:
-# url = "https://evermeet.cx/ffmpeg/getrelease/zip"
-# exeName = "ffmpeg"
-# cached = Join-Path $cacheDir "ffmpeg-darwin.zip"
-# dest = Join-Path $darwinDir "ffmpeg"
-#
-# Linux:
-# url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n6.1-latest-linux64-gpl-6.1.tar.xz"
-# exeName = "ffmpeg"
-# cached = Join-Path $cacheDir "ffmpeg-linux.tar.xz"
-# dest = Join-Path $linuxDir "ffmpeg"
-
-# Skip if FFmpeg already exists
-if (Test-Path $ffmpegBuild.dest) {
-    Write-Host "FFmpeg already exists, skipping..."
-    exit 0
+# Function to extract archives
+function Extract-Archive {
+    param (
+        [string]$archivePath,
+        [string]$destinationPath,
+        [string]$archiveType
+    )
+    
+    $extractDir = Join-Path $env:TEMP "ffmpeg-temp"
+    New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+    
+    switch ($archiveType) {
+        "zip" {
+            Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+        }
+        "tar.xz" {
+            # For Linux builds, we'll extract during the Linux build process
+            # This is just a placeholder as we can't extract tar.xz in PowerShell easily
+            Copy-Item $archivePath -Destination $extractDir
+        }
+    }
+    
+    return $extractDir
 }
 
-Write-Host "Processing FFmpeg for Windows..."
-
-# Download if not in cache
-if (-not (Test-Path $ffmpegBuild.cached)) {
-    Write-Host "Downloading FFmpeg..."
-    $webClient = New-Object System.Net.WebClient
-    $webClient.DownloadFile($ffmpegBuild.url, $ffmpegBuild.cached)
-} else {
-    Write-Host "Using cached FFmpeg..."
+# Process each platform
+foreach ($platform in $ffmpegBuilds.Keys) {
+    Write-Host "`nProcessing FFmpeg for $platform..."
+    
+    $build = $ffmpegBuilds[$platform]
+    $platformDir = Join-Path $binDir $platform
+    $cachedFile = Join-Path $cacheDir "ffmpeg-$platform.$($build.archiveType)"
+    $destPath = Join-Path $platformDir $build.exeName
+    
+    # Create platform directory
+    New-Item -ItemType Directory -Force -Path $platformDir | Out-Null
+    
+    # Skip if FFmpeg already exists
+    if (Test-Path $destPath) {
+        Write-Host "FFmpeg for $platform already exists, skipping..."
+        continue
+    }
+    
+    # Download FFmpeg
+    Download-File -url $build.url -output $cachedFile
+    
+    # Extract and copy FFmpeg
+    Write-Host "Extracting FFmpeg for $platform..."
+    $extractDir = Extract-Archive -archivePath $cachedFile -destinationPath $platformDir -archiveType $build.archiveType
+    
+    # Find and copy FFmpeg binary
+    $ffmpegSrc = Get-ChildItem -Path $extractDir -Recurse -Filter $build.exeName | Select-Object -First 1
+    if ($ffmpegSrc) {
+        Copy-Item $ffmpegSrc.FullName -Destination $destPath -Force
+        Write-Host "FFmpeg copied to: $destPath"
+    } else {
+        Write-Warning "Could not find FFmpeg binary for $platform"
+    }
+    
+    # Cleanup
+    Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
 }
 
-# Create temp extraction directory
-$extractDir = Join-Path $env:TEMP "ffmpeg-temp"
-New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+Write-Host "`nFFmpeg setup complete for all platforms!"
 
-# Extract and copy FFmpeg
-Write-Host "Extracting FFmpeg..."
-Expand-Archive -Path $ffmpegBuild.cached -DestinationPath $extractDir -Force
-$ffmpegSrc = Get-ChildItem -Path $extractDir -Recurse -Filter $ffmpegBuild.exeName | Select-Object -First 1
-Copy-Item $ffmpegSrc.FullName -Destination $ffmpegBuild.dest
+# Create platform-specific permission scripts with proper shell script syntax
+$unixPermScript = @'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+chmod +x "$SCRIPT_DIR/ffmpeg"
+'@
 
-# Cleanup
-Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+# Save permission scripts with Unix line endings
+$darwinPermPath = Join-Path (Join-Path $binDir "darwin") "set-permissions.sh"
+$linuxPermPath = Join-Path (Join-Path $binDir "linux") "set-permissions.sh"
 
-Write-Host "FFmpeg setup complete!"
+# Create directories if they don't exist
+New-Item -ItemType Directory -Force -Path (Split-Path $darwinPermPath) | Out-Null
+New-Item -ItemType Directory -Force -Path (Split-Path $linuxPermPath) | Out-Null
 
-# Note: For MacOS/Linux installers:
-# 1. Create similar scripts named download-ffmpeg.sh
-# 2. Use appropriate download URLs and extraction methods
-# 3. Set executable permissions (chmod +x) after extraction
-# 4. Consider platform-specific compression formats (zip vs tar.gz) 
+# Write the scripts with Unix line endings
+$unixPermScript.Replace("`r`n", "`n") | Set-Content -NoNewline -Path $darwinPermPath -Encoding UTF8
+$unixPermScript.Replace("`r`n", "`n") | Set-Content -NoNewline -Path $linuxPermPath -Encoding UTF8
+
+Write-Host "Permission scripts created successfully" 

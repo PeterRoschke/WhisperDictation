@@ -2,7 +2,7 @@
   "name": "whisperdictation",
   "displayName": "WhisperDictation",
   "description": "Add Whisper Speech to Text typing to VSCode",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -197,10 +197,10 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "webpack --mode production --devtool hidden-source-map",
+    "vscode:prepublish": "npm run download-ffmpeg && webpack --mode production --devtool hidden-source-map",
     "compile": "webpack",
     "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
+    "package": "npm run download-ffmpeg && webpack --mode production --devtool hidden-source-map && vsce package --no-dependencies",
     "lint": "eslint src",
     "download-ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/download-ffmpeg.ps1"
   },

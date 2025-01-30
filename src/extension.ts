@@ -68,13 +68,35 @@ function resetRecordingState() {
 }
 
 // Helper function to get the ffmpeg binary path
-function getFfmpegPath(): string {
+async function getFfmpegPath(): Promise<string> {
   const platform = os.platform();
   const binDir = path.join(extensionContext.extensionPath, "resources", "bin");
-  const ffmpegPath = path.join(
-    binDir,
-    platform === "win32" ? "win32/ffmpeg.exe" : platform === "darwin" ? "darwin/ffmpeg" : "linux/ffmpeg"
-  );
+  const platformDir = path.join(binDir, platform);
+  const ffmpegPath = path.join(platformDir, platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+
+  // Set executable permissions on Unix platforms
+  if (platform !== "win32") {
+    const permissionScript = path.join(platformDir, "set-permissions.sh");
+    try {
+      // Make the permission script executable
+      await fs.promises.chmod(permissionScript, 0o755);
+      // Run the permission script
+      const process = spawn("/bin/bash", [permissionScript]);
+      await new Promise<void>((resolve, reject) => {
+        process.on("exit", (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Permission script failed with code ${code}`));
+          }
+        });
+        process.on("error", reject);
+      });
+    } catch (error) {
+      log(`Error setting FFmpeg permissions: ${error}`, true);
+      throw error;
+    }
+  }
 
   log(`Platform: ${platform}`);
   log(`FFmpeg path: ${ffmpegPath}`);
@@ -209,7 +231,7 @@ async function startRecording() {
     log(`Temp file path: ${tempFilePath}`);
 
     // Get ffmpeg path
-    const ffmpegPath = getFfmpegPath();
+    const ffmpegPath = await getFfmpegPath();
 
     // Ensure ffmpeg exists
     if (!fs.existsSync(ffmpegPath)) {
@@ -553,7 +575,7 @@ async function stopRecording() {
 
 async function detectAudioDevices(): Promise<AudioDevice[]> {
   try {
-    const ffmpegPath = getFfmpegPath();
+    const ffmpegPath = await getFfmpegPath();
     if (!fs.existsSync(ffmpegPath)) {
       throw new Error(`FFmpeg not found at ${ffmpegPath}`);
     }
