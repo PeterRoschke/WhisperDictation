@@ -9,42 +9,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
-const AudioRecorder = require("node-audiorecorder");
-
-// Add type declarations for node-audiorecorder
-interface AudioRecorderOptions {
-  program: string;
-  silence: number;
-  device: string | null;
-  rate: number;
-  channels: number;
-  encoding: string;
-  bits: number;
-}
-
-interface AudioRecorderInstance {
-  start: () => { stream: () => NodeJS.ReadableStream };
-  stop: () => void;
-  on: (event: string, callback: (error: Error) => void) => void;
-}
-
-// Global state
-let isRecording = false;
-
-let recordingProcess: ReturnType<typeof spawn> | undefined;
-let statusBarItem: vscode.StatusBarItem;
-let openai: OpenAI | undefined;
-let outputChannel: vscode.OutputChannel;
-let tempFilePath: string | undefined;
-let extensionContext: vscode.ExtensionContext;
-let recordingTimer: NodeJS.Timeout | undefined;
-let currentAudioDevice: AudioDevice | undefined;
-let audioRecorder: AudioRecorderInstance | undefined;
-let recordingStream: fs.WriteStream | undefined;
-
-let audioRecorderOptions: AudioRecorderOptions;
-
-const OPENAI_API_KEY_SECRET = "openai-key";
 
 // Type definitions
 interface AudioDevice {
@@ -53,81 +17,26 @@ interface AudioDevice {
   isDefault?: boolean;
 }
 
-// Add recording state enum
+// Recording states
 enum RecordingState {
   Idle = "idle",
   Recording = "recording",
   Processing = "processing",
 }
 
+// Global state
+let recordingProcess: ReturnType<typeof spawn> | undefined;
+let statusBarItem: vscode.StatusBarItem;
+let openai: OpenAI | undefined;
+let outputChannel: vscode.OutputChannel;
+let tempFilePath: string | undefined;
+let extensionContext: vscode.ExtensionContext;
+let recordingTimer: NodeJS.Timeout | undefined;
+let currentAudioDevice: AudioDevice | undefined;
 let availableDevices: AudioDevice[] = [];
 let currentState: RecordingState = RecordingState.Idle;
 
-// Add reset function after the global state declarations
-function resetRecordingState() {
-  // Clear recording timer
-  if (recordingTimer) {
-    clearTimeout(recordingTimer);
-    recordingTimer = undefined;
-  }
-
-  // Stop and clean up audio recorder
-  if (audioRecorder) {
-    try {
-      audioRecorder.stop();
-    } catch (error) {
-      log("Error stopping audio recorder: " + error, true);
-    }
-    audioRecorder = undefined;
-  }
-
-  // Close recording stream
-  if (recordingStream) {
-    try {
-      recordingStream.end();
-    } catch (error) {
-      log("Error closing recording stream: " + error, true);
-    }
-    recordingStream = undefined;
-  }
-
-  // Clean up temp file
-  if (tempFilePath && fs.existsSync(tempFilePath)) {
-    try {
-      fs.unlinkSync(tempFilePath);
-    } catch (error) {
-      log("Error cleaning up temp file: " + error, true);
-    }
-    tempFilePath = undefined;
-  }
-
-  // Reset recording state and status bar
-  currentState = RecordingState.Idle;
-  updateStatusBarState();
-}
-
-function updateStatusBarState() {
-  if (!statusBarItem) return;
-
-  switch (currentState) {
-    case RecordingState.Idle:
-      statusBarItem.text = "$(mic) Start Dictation";
-      statusBarItem.command = "whisperdictation.startDictation";
-      // Set tooltip with current audio device
-      statusBarItem.tooltip = currentAudioDevice ? `Current audio device: ${currentAudioDevice.name}` : "No audio device selected";
-      break;
-    case RecordingState.Recording:
-      statusBarItem.text = "$(record) Recording... Click to Stop";
-      statusBarItem.command = "whisperdictation.stopDictation";
-      statusBarItem.tooltip = currentAudioDevice ? `Recording from: ${currentAudioDevice.name}` : "Recording";
-      break;
-    case RecordingState.Processing:
-      statusBarItem.text = "$(sync~spin) Processing...";
-      statusBarItem.command = undefined; // Disable clicking while processing
-      statusBarItem.tooltip = "Transcribing audio...";
-      break;
-  }
-}
+const OPENAI_API_KEY_SECRET = "openai-key";
 
 // Helper function for logging
 function log(message: string, error: boolean = false) {
@@ -141,7 +50,7 @@ function log(message: string, error: boolean = false) {
   }
 }
 
-// Add helper function to get SoX path
+// Helper function to get SoX path
 function getSoxPath(): string {
   const extensionPath = path.dirname(__dirname);
   const soxPath = path.join(extensionPath, "resources", "bin", "win32", "sox.exe");
@@ -149,21 +58,63 @@ function getSoxPath(): string {
   return soxPath;
 }
 
-// Update logger interface to match node-audiorecorder's expectations
-interface AudioLogger {
-  log: (message: string) => void;
-  warn: (message: string) => void;
-  error: (message: string) => void;
+// Reset recording state
+function resetRecordingState() {
+  // Clear recording timer
+  if (recordingTimer) {
+    clearTimeout(recordingTimer);
+    recordingTimer = undefined;
+  }
+
+  // Kill the recording process if it exists
+  if (recordingProcess) {
+    try {
+      recordingProcess.kill();
+    } catch (error) {
+      log(`Error killing recording process: ${error}`, true);
+    }
+    recordingProcess = undefined;
+  }
+
+  // Clean up temp file
+  if (tempFilePath && fs.existsSync(tempFilePath)) {
+    try {
+      fs.unlinkSync(tempFilePath);
+    } catch (error) {
+      log(`Error cleaning up temp file: ${error}`, true);
+    }
+    tempFilePath = undefined;
+  }
+
+  // Reset recording state and status bar
+  currentState = RecordingState.Idle;
+  updateStatusBarState();
 }
 
-// Create logger object that matches the expected interface
-const audioLogger: AudioLogger = {
-  log: (message: string) => log(`[AudioRecorder] ${message}`),
-  warn: (message: string) => log(`[AudioRecorder Warning] ${message}`),
-  error: (message: string) => log(`[AudioRecorder Error] ${message}`, true),
-};
+// Update status bar based on current state
+function updateStatusBarState() {
+  if (!statusBarItem) return;
 
-// Add this function after the other helper functions
+  switch (currentState) {
+    case RecordingState.Idle:
+      statusBarItem.text = "$(mic) Start Dictation";
+      statusBarItem.command = "whisperdictation.startDictation";
+      statusBarItem.tooltip = currentAudioDevice ? `Current audio device: ${currentAudioDevice.name}` : "No audio device selected";
+      break;
+    case RecordingState.Recording:
+      statusBarItem.text = "$(record) Recording... Click to Stop";
+      statusBarItem.command = "whisperdictation.stopDictation";
+      statusBarItem.tooltip = currentAudioDevice ? `Recording from: ${currentAudioDevice.name}` : "Recording";
+      break;
+    case RecordingState.Processing:
+      statusBarItem.text = "$(sync~spin) Processing...";
+      statusBarItem.command = undefined;
+      statusBarItem.tooltip = "Transcribing audio...";
+      break;
+  }
+}
+
+// Get debug directory based on OS
 function getDebugDirectory(): string {
   const platform = os.platform();
   let basePath: string;
@@ -616,7 +567,7 @@ async function selectAudioDevice(): Promise<string> {
 async function promptForDeviceSelection(): Promise<void> {
   try {
     // Only reset if currently recording
-    if (isRecording) {
+    if (recordingProcess) {
       log("Recording in progress, stopping before device switch");
       await stopRecording();
     }
@@ -793,35 +744,6 @@ async function initializeAudioDevice(): Promise<boolean> {
     }
     log(`Found SoX at: ${soxPath}`);
 
-    // Initialize AudioRecorder options
-    log("Setting up AudioRecorder options...");
-    audioRecorderOptions = {
-      program: soxPath,
-      silence: 0,
-      device: currentAudioDevice.id,
-      rate: 16000,
-      channels: 1,
-      encoding: "signed-integer",
-      bits: 16,
-    };
-    log(`AudioRecorder options configured: ${JSON.stringify(audioRecorderOptions, null, 2)}`);
-
-    // Initialize AudioRecorder with options and proper logger
-    log("Creating new AudioRecorder instance...");
-    try {
-      audioRecorder = new AudioRecorder(audioRecorderOptions, audioLogger);
-      log("AudioRecorder instance created successfully");
-    } catch (recorderError) {
-      log(`Failed to create AudioRecorder instance: ${recorderError}`, true);
-      return false;
-    }
-
-    // Test if the recorder was initialized properly
-    if (!audioRecorder) {
-      log("AudioRecorder instance is undefined after creation", true);
-      return false;
-    }
-
     log("Audio device initialization completed successfully");
     return true;
   } catch (error) {
@@ -864,7 +786,7 @@ async function updateApiKey() {
 
 // This method is called when your extension is deactivated
 export function deactivate() {
-  if (isRecording && recordingProcess) {
+  if (recordingProcess) {
     recordingProcess.kill();
   }
   recordingProcess = undefined;

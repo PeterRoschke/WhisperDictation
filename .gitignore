@@ -3,9 +3,11 @@ dist
 node_modules
 .vscode-test/
 *.vsix
-DictationAudio
-
-# Ignore ffmpeg binaries
-resources/bin/win32/ffmpeg.exe
-resources/bin/darwin/ffmpeg
-resources/bin/linux/ffmpeg
+.DS_Store
+# Ignore SoX binaries
+resources/bin/win32/sox.exe
+resources/bin/win32/*.dll
+resources/bin/darwin/sox
+resources/bin/linux/sox
+# Debug files
+WhisperDictation/Debug/

@@ -26,9 +26,7 @@
     },
     "virtualWorkspaces": true
   },
-  "enabledApiProposals": [
-    "audioRecording"
-  ],
+  "enabledApiProposals": [],
   "contributes": {
     "commands": [
       {
@@ -216,8 +214,7 @@
     "download-sox": "powershell -ExecutionPolicy Bypass -File scripts/download-sox.ps1"
   },
   "dependencies": {
-    "openai": "^4.28.0",
-    "node-audiorecorder": "^3.0.0"
+    "openai": "^4.28.0"
   },
   "devDependencies": {
     "@types/node": "20.x",
