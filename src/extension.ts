@@ -137,7 +137,7 @@ function getDebugDirectory(): string {
 async function startRecording(context: vscode.ExtensionContext): Promise<void> {
   try {
     // Create a temporary file for the recording
-    tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.wav`);
+    tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.ogg`);
     log(`Recording to temporary file: ${tempFilePath}`);
 
     // Build the exact command we know works
@@ -145,7 +145,7 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
 
     // Format options must come before input/output files
     const args = [
-      // Format options
+      // Format options for input
       "-c",
       "1",
       "-r",
@@ -158,7 +158,9 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "-t",
       "waveaudio",
       "default",
-      // Output file
+      // Output file with Vorbis encoding
+      "-t",
+      "vorbis",
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
     ];
 
@@ -319,7 +321,7 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
 
       // Create debug file path with timestamp
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      debugFilePath = path.join(debugDir, `dictation-${timestamp}.wav`);
+      debugFilePath = path.join(debugDir, `dictation-${timestamp}.ogg`);
       fs.copyFileSync(filePath, debugFilePath);
       log(`Debug file copied to: ${debugFilePath}`);
     }
@@ -338,10 +340,10 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
             tempPath: filePath,
             debugPath: debugFilePath || "Debug files disabled",
             sizeInMB: (stats.size / (1024 * 1024)).toFixed(2) + " MB",
-            format: "WAV",
+            format: "OGG Vorbis",
             sampleRate: "16000 Hz",
             channels: "1 (mono)",
-            encoding: "signed-integer",
+            encoding: "16-bit PCM",
             bits: "16",
           },
           null,
