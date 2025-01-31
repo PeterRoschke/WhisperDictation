@@ -9,38 +9,14 @@ Write-Host "Starting extension build..." -ForegroundColor Cyan
 
 # Clean by default unless explicitly skipped
 if (-not $NoClean) {
-    # Clean build artifacts but preserve FFmpeg binaries
     Write-Host "Cleaning build artifacts..." -ForegroundColor Yellow
-    # Windows-specific FFmpeg path
-    $ffmpegDir = Join-Path $PSScriptRoot "..\resources\bin\win32"
-    $tempFFmpegDir = Join-Path $env:TEMP "ffmpeg-backup"
-
-    # Note: When creating MacOS/Linux installers, follow this pattern but use:
-    # MacOS: "..\resources\bin\darwin"
-    # Linux: "..\resources\bin\linux"
     
-    # Backup FFmpeg binaries if they exist
-    if (Test-Path $ffmpegDir) {
-        Write-Host "Backing up FFmpeg binaries..." -ForegroundColor Yellow
-        Copy-Item -Path $ffmpegDir -Destination $tempFFmpegDir -Recurse -Force
-    }
-
     # Clean dist and vsix files
     if (Test-Path "dist") {
         Remove-Item -Recurse -Force "dist"
     }
     if (Test-Path "*.vsix") {
         Remove-Item -Force "*.vsix"
-    }
-
-    # Restore FFmpeg binaries
-    if (Test-Path $tempFFmpegDir) {
-        Write-Host "Restoring FFmpeg binaries..." -ForegroundColor Yellow
-        if (-not (Test-Path $ffmpegDir)) {
-            New-Item -ItemType Directory -Force -Path $ffmpegDir | Out-Null
-        }
-        Copy-Item -Path "$tempFFmpegDir\*" -Destination $ffmpegDir -Recurse -Force
-        Remove-Item -Path $tempFFmpegDir -Recurse -Force
     }
 }
 
@@ -50,14 +26,34 @@ if (-not (Test-Path "node_modules")) {
     npm install --no-audit --no-fund
 }
 
-# Download FFmpeg if not present (Windows only)
-# Note: For MacOS/Linux installers, create similar scripts that download the appropriate binaries
-# Example paths:
-# MacOS: "..\resources\bin\darwin\ffmpeg"
-# Linux: "..\resources\bin\linux\ffmpeg"
-if (-not (Test-Path (Join-Path $PSScriptRoot "..\resources\bin\win32\ffmpeg.exe"))) {
-    Write-Host "Downloading FFmpeg binaries..." -ForegroundColor Yellow
-    npm run download-ffmpeg
+# Check if SoX exists before downloading
+$rootPath = Join-Path -Path $PSScriptRoot -ChildPath ".." -Resolve
+$resourcesPath = Join-Path -Path $rootPath -ChildPath "resources"
+$binPath = Join-Path -Path $resourcesPath -ChildPath "bin"
+$win32Path = Join-Path -Path $binPath -ChildPath "win32"
+$soxPath = Join-Path -Path $win32Path -ChildPath "sox.exe"
+
+Write-Host "Checking for SoX at: $soxPath" -ForegroundColor Gray
+
+if (-not (Test-Path $soxPath)) {
+    Write-Host "SoX not found, downloading..." -ForegroundColor Yellow
+    npm run download-sox
+} else {
+    Write-Host "SoX already installed, verifying..." -ForegroundColor Green
+    # Verify the installation
+    try {
+        $soxVersion = & $soxPath --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Found SoX version: $soxVersion" -ForegroundColor Green
+        } else {
+            Write-Host "SoX installation appears corrupted, re-downloading..." -ForegroundColor Yellow
+            npm run download-sox
+        }
+    } catch {
+        Write-Host "Error verifying SoX installation, re-downloading..." -ForegroundColor Yellow
+        Write-Host "Error details: $_" -ForegroundColor Red
+        npm run download-sox
+    }
 }
 
 # Build and package in one step

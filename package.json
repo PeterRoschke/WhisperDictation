@@ -2,7 +2,7 @@
   "name": "whisperdictation",
   "displayName": "WhisperDictation",
   "description": "Add Whisper Speech to Text typing to VSCode",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -21,9 +21,14 @@
   "main": "./dist/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
-    }
+      "supported": true,
+      "description": "This extension requires microphone access for audio recording."
+    },
+    "virtualWorkspaces": true
   },
+  "enabledApiProposals": [
+    "audioRecording"
+  ],
   "contributes": {
     "commands": [
       {
@@ -181,9 +186,15 @@
         "whisperdictation.audioDevice": {
           "type": "string",
           "default": "",
-          "description": "Audio input device to use for recording",
+          "description": "Audio input device name. To change the device, use the Command Palette (Ctrl+Shift+P) and search for 'Whisper Dictation: Select Audio Device'. Note: The OpenAI API key can be updated using 'Whisper Dictation: Update OpenAI API Key' in the Command Palette.",
           "editPresentation": "singlelineText",
           "order": 2
+        },
+        "whisperdictation.saveDebugFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Save audio recordings and transcriptions to the application data directory for debugging purposes",
+          "order": 3
         }
       }
     },
@@ -197,15 +208,16 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run download-ffmpeg && webpack --mode production --devtool hidden-source-map",
+    "vscode:prepublish": "webpack --mode production --devtool hidden-source-map",
     "compile": "webpack",
     "watch": "webpack --watch",
-    "package": "npm run download-ffmpeg && webpack --mode production --devtool hidden-source-map && vsce package --no-dependencies",
+    "package": "npm run download-sox && webpack --mode production --devtool hidden-source-map && vsce package --no-dependencies",
     "lint": "eslint src",
-    "download-ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/download-ffmpeg.ps1"
+    "download-sox": "powershell -ExecutionPolicy Bypass -File scripts/download-sox.ps1"
   },
   "dependencies": {
-    "openai": "^4.28.0"
+    "openai": "^4.28.0",
+    "node-audiorecorder": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "20.x",
