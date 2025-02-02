@@ -4,16 +4,16 @@ A VS Code extension that enables voice dictation using OpenAI's Whisper API for 
 
 ## Features
 
-- Record audio directly from your microphone
+- Record audio directly from your system's default microphone
 - Transcribe speech to text using OpenAI's Whisper API
 - Support for multiple languages
-- Configurable audio input device selection
 - Optional debug file saving for troubleshooting
 
 ## Requirements
 
 - SoX (automatically downloaded during installation)
 - OpenAI API key
+- A working microphone set as your system default input device
 
 ## Installation
 
@@ -21,6 +21,7 @@ A VS Code extension that enables voice dictation using OpenAI's Whisper API for 
 2. Set your OpenAI API key using the command palette (Ctrl+Shift+P):
    - Search for "Whisper Dictation: Update OpenAI API Key"
    - Enter your API key when prompted
+3. Ensure your desired microphone is set as the system default input device
 
 ## Usage
 
@@ -32,17 +33,17 @@ A VS Code extension that enables voice dictation using OpenAI's Whisper API for 
 ## Configuration
 
 - `whisperdictation.language`: Set the transcription language (defaults to English)
-- `whisperdictation.audioDevice`: Select the audio input device
 - `whisperdictation.saveDebugFiles`: Enable saving of audio and transcription files for debugging
 
 ## Troubleshooting
 
 If you encounter issues:
 
-1. Check your microphone permissions
-2. Verify your OpenAI API key is valid
-3. Enable debug file saving to capture audio recordings for troubleshooting
-4. Check the Output panel (View -> Output -> WhisperDictation) for detailed logs
+1. Check your microphone permissions in your system settings
+2. Make sure your desired microphone is set as the system default input device
+3. Verify your OpenAI API key is valid
+4. Enable debug file saving to capture audio recordings for troubleshooting
+5. Check the Output panel (View -> Output -> WhisperDictation) for detailed logs
 
 ## License
 

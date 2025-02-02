@@ -42,11 +42,6 @@
         "title": "Whisper Dictation: Open Settings"
       },
       {
-        "command": "whisperdictation.selectDevice",
-        "title": "Whisper Dictation: Select Audio Device",
-        "category": "Whisper Dictation"
-      },
-      {
         "command": "whisperdictation.updateApiKey",
         "title": "Whisper Dictation: Update OpenAI API Key",
         "category": "Whisper Dictation"
@@ -181,18 +176,11 @@
           ],
           "description": "Language code for transcription"
         },
-        "whisperdictation.audioDevice": {
-          "type": "string",
-          "default": "",
-          "description": "Audio input device name. To change the device, use the Command Palette (Ctrl+Shift+P) and search for 'Whisper Dictation: Select Audio Device'. Note: The OpenAI API key can be updated using 'Whisper Dictation: Update OpenAI API Key' in the Command Palette.",
-          "editPresentation": "singlelineText",
-          "order": 2
-        },
         "whisperdictation.saveDebugFiles": {
           "type": "boolean",
           "default": false,
           "description": "Save audio recordings and transcriptions to the application data directory for debugging purposes",
-          "order": 3
+          "order": 2
         }
       }
     },

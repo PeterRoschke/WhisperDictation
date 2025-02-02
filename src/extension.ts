@@ -32,12 +32,10 @@ let outputChannel: vscode.OutputChannel;
 let tempFilePath: string | undefined;
 let extensionContext: vscode.ExtensionContext;
 let recordingTimer: NodeJS.Timeout | undefined;
-let currentAudioDevice: AudioDevice | undefined;
-let availableDevices: AudioDevice[] = [];
 let currentState: RecordingState = RecordingState.Idle;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
-const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
+const MAX_FILE_SIZE_BYTES = 0.5 * 1024 * 1024; // 2MB limit before compression
 const MAX_FINAL_SIZE_BYTES = 25 * 1024 * 1024; // 25MB absolute limit for Whisper API
 
 // Helper function for logging
@@ -101,12 +99,12 @@ function updateStatusBarState() {
     case RecordingState.Idle:
       statusBarItem.text = "$(mic) Start Dictation";
       statusBarItem.command = "whisperdictation.startDictation";
-      statusBarItem.tooltip = currentAudioDevice ? `Current audio device: ${currentAudioDevice.name}` : "No audio device selected";
+      statusBarItem.tooltip = "Start recording using system default microphone";
       break;
     case RecordingState.Recording:
       statusBarItem.text = "$(record) Recording... Click to Stop";
       statusBarItem.command = "whisperdictation.stopDictation";
-      statusBarItem.tooltip = currentAudioDevice ? `Recording from: ${currentAudioDevice.name}` : "Recording";
+      statusBarItem.tooltip = "Recording in progress";
       break;
     case RecordingState.Processing:
       statusBarItem.text = "$(sync~spin) Processing...";
@@ -484,7 +482,7 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
 
     // Save transcription text if debug is enabled
     if (shouldSaveDebug && debugFilePath) {
-      fs.writeFileSync(debugFilePath + ".txt", transcription.text);
+      fs.writeFileSync(debugFilePath.replace(/\.(wav|ogg)$/, "") + ".txt", transcription.text);
       log("Transcription saved to debug file");
     }
 
@@ -527,42 +525,6 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     }
 
     resetRecordingState();
-  }
-}
-
-async function detectAudioDevices(): Promise<AudioDevice[]> {
-  try {
-    log("Detecting audio devices...");
-    const soxPath = getSoxPath();
-
-    // Try to record a brief sample to verify device access
-    const testProcess = spawn(soxPath, ["-t", "waveaudio", "default", "-n", "trim", "0", "0.1"]);
-
-    await new Promise<void>((resolve, reject) => {
-      testProcess.on("close", (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`Device test failed with code ${code}`));
-        }
-      });
-    });
-
-    // If we get here, the default device works
-    const defaultDevice = {
-      id: "default",
-      name: "System Default Input",
-      isDefault: true,
-    };
-
-    log(`Found working default audio device: ${defaultDevice.name}`);
-    return [defaultDevice];
-  } catch (error) {
-    log(`Failed to detect audio devices: ${error}`, true);
-    if (error instanceof Error) {
-      log(`Error stack trace: ${error.stack}`, true);
-    }
-    throw error;
   }
 }
 
@@ -619,84 +581,7 @@ async function checkMicrophoneAccess(): Promise<boolean> {
   }
 }
 
-async function selectAudioDevice(): Promise<string> {
-  // Use the cached device if available
-  if (currentAudioDevice) {
-    return currentAudioDevice.id;
-  }
-
-  // If no cached device, update available devices
-  availableDevices = await detectAudioDevices();
-
-  if (availableDevices.length === 0) {
-    throw new Error("No audio devices found");
-  }
-
-  // Get configured device name from settings
-  const config = vscode.workspace.getConfiguration("whisperdictation");
-  const configuredDeviceName = config.get<string>("audioDevice");
-
-  // If a device name is configured, check if it's available
-  if (configuredDeviceName) {
-    const device = availableDevices.find((d) => d.name === configuredDeviceName);
-    if (device) {
-      currentAudioDevice = device;
-      return device.id;
-    }
-  }
-
-  // Use first available device
-  currentAudioDevice = availableDevices[0];
-  return currentAudioDevice.id;
-}
-
-async function promptForDeviceSelection(): Promise<void> {
-  try {
-    // Only reset if currently recording
-    if (recordingProcess) {
-      log("Recording in progress, stopping before device switch");
-      await stopRecording();
-    }
-
-    // Update available devices
-    availableDevices = await detectAudioDevices();
-
-    if (availableDevices.length === 0) {
-      vscode.window.showErrorMessage("No audio devices found");
-      return;
-    }
-
-    // Create QuickPick items
-    const items = availableDevices.map((device) => ({
-      label: device.name,
-      description: device.id,
-      detail: "Audio Input Device",
-    }));
-
-    const selected = await vscode.window.showQuickPick(items, {
-      placeHolder: "Select audio input device",
-      title: "Available Audio Devices",
-    });
-
-    if (selected) {
-      // Save device name to settings and update current device
-      const config = vscode.workspace.getConfiguration("whisperdictation");
-      await config.update("audioDevice", selected.label, vscode.ConfigurationTarget.Global);
-      currentAudioDevice = availableDevices.find((d) => d.name === selected.label);
-
-      // Update status bar tooltip with current device
-      statusBarItem.tooltip = `Current audio device: ${selected.label}`;
-
-      vscode.window.showInformationMessage(`Audio device set to: ${selected.label}`);
-      log(`Audio device configured: ${selected.label} (${selected.description})`);
-    }
-  } catch (error) {
-    log(`Error selecting audio device: ${error}`, true);
-    vscode.window.showErrorMessage(`Failed to select audio device: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-// Update the activation function to properly handle OpenAI API key
+// Update the activation function
 export async function activate(context: vscode.ExtensionContext) {
   try {
     // Create output channel first for logging
@@ -725,14 +610,12 @@ export async function activate(context: vscode.ExtensionContext) {
       throw error;
     }
 
-    // Initialize audio device early
-    log("Pre-initializing audio devices...");
-    const initResult = await initializeAudioDevice();
-    if (!initResult) {
-      log("Audio device initialization failed", true);
-      vscode.window.showErrorMessage("Failed to initialize audio device. Some features may not work correctly.");
-    } else {
-      log("Audio device initialization successful");
+    // Check microphone access
+    const hasAccess = await checkMicrophoneAccess();
+    if (!hasAccess) {
+      log("Microphone access check failed", true);
+      vscode.window.showErrorMessage("WhisperDictation requires microphone access. Please check your system permissions and try again.");
+      return;
     }
 
     // Try to initialize OpenAI client with existing API key
@@ -770,10 +653,6 @@ export async function activate(context: vscode.ExtensionContext) {
         log("Open settings command triggered");
         await openSettings();
       }),
-      vscode.commands.registerCommand("whisperdictation.selectDevice", async () => {
-        log("Select device command triggered");
-        await promptForDeviceSelection();
-      }),
       vscode.commands.registerCommand("whisperdictation.updateApiKey", async () => {
         log("Update API key command triggered");
         await updateApiKey();
@@ -788,56 +667,6 @@ export async function activate(context: vscode.ExtensionContext) {
       log(`Error stack trace: ${error.stack}`, true);
     }
     throw error;
-  }
-}
-
-async function initializeAudioDevice(): Promise<boolean> {
-  try {
-    log("Starting audio device initialization...");
-
-    // Check microphone access first
-    const hasAccess = await checkMicrophoneAccess();
-    if (!hasAccess) {
-      vscode.window.showErrorMessage("WhisperDictation requires microphone access. Please check your system permissions and try again.");
-      return false;
-    }
-
-    // First, detect available devices
-    availableDevices = await detectAudioDevices();
-    if (availableDevices.length === 0) {
-      log("No audio devices found", true);
-      return false;
-    }
-
-    // Get configured device from settings
-    const config = vscode.workspace.getConfiguration("whisperdictation");
-    const configuredDeviceName = config.get<string>("audioDevice");
-
-    // Find configured device or use first available
-    currentAudioDevice = configuredDeviceName ? availableDevices.find((d) => d.name === configuredDeviceName) : availableDevices[0];
-
-    if (!currentAudioDevice) {
-      currentAudioDevice = availableDevices[0];
-      // Save the default device to settings
-      await config.update("audioDevice", currentAudioDevice.name, vscode.ConfigurationTarget.Global);
-      log(`Set default audio device to: ${currentAudioDevice.name}`);
-    }
-
-    const soxPath = getSoxPath();
-    if (!fs.existsSync(soxPath)) {
-      log(`SoX not found at path: ${soxPath}`, true);
-      return false;
-    }
-    log(`Found SoX at: ${soxPath}`);
-
-    log("Audio device initialization completed successfully");
-    return true;
-  } catch (error) {
-    log(`Failed to initialize audio device: ${error}`, true);
-    if (error instanceof Error) {
-      log(`Error stack trace: ${error.stack}`, true);
-    }
-    return false;
   }
 }
 
