@@ -11,7 +11,35 @@ A VS Code extension that enables voice dictation using OpenAI's Whisper API for 
 
 ## Requirements
 
-- SoX (included in pacakge for Windows and MacOS)
+### Windows
+
+- SoX is included in the package for Windows x64
+
+### macOS
+
+- Intel Macs: SoX is included in the package
+- Apple Silicon (M1/M2) Macs: Install SoX via Homebrew:
+  ```bash
+  brew install sox
+  ```
+
+### Linux
+
+- Install SoX using your distribution's package manager:
+
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install sox
+
+  # Fedora
+  sudo dnf install sox
+
+  # Arch Linux
+  sudo pacman -S sox
+  ```
+
+### All Platforms
+
 - OpenAI API key
 - A working microphone set as your system default input device
 

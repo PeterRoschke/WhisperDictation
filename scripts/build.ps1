@@ -39,6 +39,11 @@ function Cleanup-TempFiles {
 }
 
 Write-Step "Starting WhisperDictation Extension Build"
+Write-Host "Note: This build script is designed to run on Windows x64 and packages binaries for:" -ForegroundColor Yellow
+Write-Host "- Windows x64 (included)" -ForegroundColor Yellow
+Write-Host "- macOS Intel x64 (included)" -ForegroundColor Yellow
+Write-Host "- macOS ARM64 (requires user installation via Homebrew)" -ForegroundColor Yellow
+Write-Host "- Linux (requires user installation via package manager)" -ForegroundColor Yellow
 
 try {
     # Clean build artifacts but preserve resources
@@ -111,8 +116,8 @@ $win32Path = Join-Path -Path $binPath -ChildPath "win32"
         return $false
     }
 
-    # Download and verify SoX for Windows
-    Write-Step "Setting up Windows binaries"
+    # Download and verify SoX for Windows (x64 only)
+    Write-Step "Setting up Windows binaries (x64)"
     $soxPath = Join-Path -Path $win32Path -ChildPath "sox.exe"
     if (-not (Test-WindowsSox -Path $soxPath)) {
         Write-Host "Windows SoX missing or incomplete, downloading..." -ForegroundColor Yellow
@@ -142,8 +147,10 @@ $win32Path = Join-Path -Path $binPath -ChildPath "win32"
         return $true
     }
 
-    # Setup macOS binaries
-    Write-Step "Setting up macOS binaries"
+    # Setup macOS binaries (Intel x64 only)
+    Write-Step "Setting up macOS binaries (Intel x64 only)"
+    Write-Host "Note: Apple Silicon (M1/M2) Macs require manual SoX installation via Homebrew" -ForegroundColor Yellow
+
     if (Test-MacSox -DarwinPath $darwinPath) {
         Write-Host "Using existing macOS SoX installation" -ForegroundColor Green
     } else {
@@ -261,6 +268,8 @@ $win32Path = Join-Path -Path $binPath -ChildPath "win32"
 
     # Setup Linux instructions and script
     Write-Step "Setting up Linux files"
+    Write-Host "Note: Linux requires manual SoX installation via package manager" -ForegroundColor Yellow
+
     $linuxScript = @'
 #!/bin/bash
 

@@ -53,6 +53,11 @@ function log(message: string, error: boolean = false) {
   }
 }
 
+// Helper function to detect Apple Silicon
+function isAppleSilicon(): boolean {
+  return os.platform() === "darwin" && process.arch === "arm64";
+}
+
 // Helper function to show platform-specific SoX error
 async function showSoxError(error: Error): Promise<void> {
   const platform = os.platform();
@@ -65,8 +70,13 @@ async function showSoxError(error: Error): Promise<void> {
       action = "Reinstall Extension";
       break;
     case "darwin":
-      message = "Error accessing SoX. The extension may need to be reinstalled or permissions need to be granted.";
-      action = "Reinstall Extension";
+      if (isAppleSilicon()) {
+        message = "On Apple Silicon Macs, SoX needs to be installed via Homebrew. Run: brew install sox";
+        action = "View Instructions";
+      } else {
+        message = "Error accessing SoX. The extension may need to be reinstalled or permissions need to be granted.";
+        action = "Reinstall Extension";
+      }
       break;
     case "linux":
       message = "Error accessing SoX. Please run the setup script to install SoX and configure permissions.";
@@ -79,7 +89,7 @@ async function showSoxError(error: Error): Promise<void> {
 
   const selected = await vscode.window.showErrorMessage(message, action);
 
-  if (selected === "View Setup Instructions") {
+  if (selected === "View Instructions" || selected === "View Setup Instructions") {
     const extensionPath = path.dirname(__dirname);
     const instructionsPath = path.join(extensionPath, "resources", "bin", "linux", "INSTALL.txt");
 
@@ -160,17 +170,20 @@ async function verifySoxInstallation(): Promise<boolean> {
 
 // Helper function to get SoX path
 function getSoxPath(): string {
-  const extensionPath = path.dirname(__dirname);
   const platform = os.platform();
+  const extensionPath = path.dirname(__dirname);
 
   switch (platform) {
     case "win32":
       return path.join(extensionPath, "resources", "bin", "win32", "sox.exe");
     case "darwin":
+      // For Apple Silicon, use system-installed SoX
+      if (isAppleSilicon()) {
+        return "sox"; // Use PATH-based SoX
+      }
       return path.join(extensionPath, "resources", "bin", "darwin", "sox");
     case "linux":
-      // On Linux, we expect SoX to be installed system-wide
-      return "sox";
+      return "sox"; // Use system-installed SoX
     default:
       throw new Error(`Unsupported platform: ${platform}`);
   }
@@ -718,7 +731,15 @@ export async function activate(context: vscode.ExtensionContext) {
     log(`Extension path: ${context.extensionPath}`);
     log(`OS platform: ${os.platform()}`);
     log(`OS release: ${os.release()}`);
+    log(`OS architecture: ${process.arch}`);
     log(`Process versions: ${JSON.stringify(process.versions, null, 2)}`);
+
+    // Show warning for Apple Silicon Macs
+    if (isAppleSilicon()) {
+      log("Detected Apple Silicon Mac");
+      const message = "On Apple Silicon Macs, SoX needs to be installed via Homebrew. Run: brew install sox";
+      vscode.window.showInformationMessage(message);
+    }
 
     // Store context
     extensionContext = context;
