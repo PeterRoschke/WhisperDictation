@@ -37,6 +37,8 @@ let availableDevices: AudioDevice[] = [];
 let currentState: RecordingState = RecordingState.Idle;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
+const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
+const MAX_FINAL_SIZE_BYTES = 25 * 1024 * 1024; // 25MB absolute limit for Whisper API
 
 // Helper function for logging
 function log(message: string, error: boolean = false) {
@@ -137,7 +139,7 @@ function getDebugDirectory(): string {
 async function startRecording(context: vscode.ExtensionContext): Promise<void> {
   try {
     // Create a temporary file for the recording
-    tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.ogg`);
+    tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.wav`);
     log(`Recording to temporary file: ${tempFilePath}`);
 
     // Build the exact command we know works
@@ -147,11 +149,11 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
     const args = [
       // Format options for input
       "-c",
-      "1",
+      "1", // Mono channel
       "-r",
-      "16000",
+      "16000", // 16kHz sample rate (Whisper requirement)
       "-b",
-      "16",
+      "16", // 16-bit depth
       "-e",
       "signed-integer",
       // Input specification
@@ -160,13 +162,15 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "default",
       // Buffer size (smaller for more frequent writes)
       "--buffer",
-      "1024",
-      // Compression setting (must come before output format)
-      "-C",
-      "0",
-      // Output format
+      "2048",
+      // reduce logging to errors, supress audio meter
+      "-V2",
+      "-q",
+      // Output format - WAV with minimal header
       "-t",
-      "vorbis",
+      "wav",
+
+      // Output file
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
     ];
 
@@ -229,6 +233,48 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
   }
 }
 
+async function convertToOgg(inputPath: string): Promise<string> {
+  const outputPath = inputPath.replace(/\.wav$/, ".ogg");
+  const soxPath = getSoxPath();
+
+  log(`Starting WAV to OGG conversion...`);
+  const startTime = Date.now();
+
+  return new Promise<string>((resolve, reject) => {
+    const conversionProcess = spawn(soxPath, [
+      inputPath,
+      "-t",
+      "ogg",
+      // High quality compression
+      "-C",
+      "4",
+      outputPath,
+    ]);
+
+    conversionProcess.stderr.on("data", (data) => {
+      log(`Conversion stderr: ${data}`);
+    });
+
+    conversionProcess.on("close", (code) => {
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      if (code === 0) {
+        log(`Conversion completed in ${duration}ms`);
+        resolve(outputPath);
+      } else {
+        log(`Conversion failed with code ${code}`, true);
+        reject(new Error(`Conversion failed with code ${code}`));
+      }
+    });
+
+    conversionProcess.on("error", (error) => {
+      log(`Conversion process error: ${error}`, true);
+      reject(error);
+    });
+  });
+}
+
 async function stopRecording() {
   try {
     log("Stopping recording process...");
@@ -243,36 +289,77 @@ async function stopRecording() {
     currentState = RecordingState.Processing;
     updateStatusBarState();
 
-    // wait 1 second before killing the process
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Short wait to allow final buffer writes
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // send sigterm to the process
+    // Send SIGTERM to the process
     log("Sending SIGTERM to recording process");
     if (recordingProcess) {
       recordingProcess.kill("SIGTERM");
-    }
 
-    // wait 200ms before final cleanup
-    await new Promise((resolve) => setTimeout(resolve, 200));
+      // Wait a short time for clean termination
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-    // Kill the recording process if it still exists
-    if (recordingProcess) {
-      log("Killing recording process");
-      recordingProcess.kill();
+      // Force kill if still running
+      if (!recordingProcess.killed) {
+        log("Process still running, forcing termination");
+        recordingProcess.kill();
+      }
       recordingProcess = undefined;
     }
 
     // Check if we have a valid recording
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      const stats = fs.statSync(tempFilePath);
-      log(`Recording file size: ${stats.size} bytes`);
-      if (stats.size > 0) {
-        log("Valid recording file found, proceeding with transcription");
-        await transcribeRecording(tempFilePath, extensionContext);
+      const initialStats = fs.statSync(tempFilePath);
+      log(`Initial WAV file size: ${initialStats.size} bytes`);
+
+      let fileToTranscribe = tempFilePath;
+
+      // Check if we need to convert to OGG
+      if (initialStats.size > MAX_FILE_SIZE_BYTES) {
+        log(`File size ${initialStats.size} bytes exceeds ${MAX_FILE_SIZE_BYTES} bytes, converting to OGG...`);
+        try {
+          const oggPath = await convertToOgg(tempFilePath);
+          const oggStats = fs.statSync(oggPath);
+          log(`Converted OGG file size: ${oggStats.size} bytes (${Math.round((oggStats.size / initialStats.size) * 100)}% of original)`);
+
+          // Clean up the original WAV file
+          fs.unlinkSync(tempFilePath);
+          log("Original WAV file cleaned up");
+
+          // Check if the OGG file is still too large
+          if (oggStats.size > MAX_FINAL_SIZE_BYTES) {
+            log("Converted file still exceeds maximum size limit", true);
+            fs.unlinkSync(oggPath);
+            vscode.window.showErrorMessage("Recording too large even after compression. Please try a shorter recording.");
+            resetRecordingState();
+            return;
+          }
+
+          fileToTranscribe = oggPath;
+          tempFilePath = oggPath; // Update tempFilePath to point to OGG file
+        } catch (error) {
+          log(`Error during conversion: ${error}`, true);
+          fs.unlinkSync(tempFilePath);
+          vscode.window.showErrorMessage("Error converting audio file. Please try again.");
+          resetRecordingState();
+          return;
+        }
+      }
+
+      if (fs.existsSync(fileToTranscribe)) {
+        const finalStats = fs.statSync(fileToTranscribe);
+        if (finalStats.size > 0) {
+          log("Valid recording file found, proceeding with transcription");
+          await transcribeRecording(fileToTranscribe, extensionContext);
+        } else {
+          log("Recording file is empty", true);
+          fs.unlinkSync(fileToTranscribe);
+          vscode.window.showErrorMessage("Recording failed - no audio data captured.");
+          resetRecordingState();
+        }
       } else {
-        log("Recording file is empty", true);
-        fs.unlinkSync(tempFilePath);
-        vscode.window.showErrorMessage("Recording failed - no audio data captured.");
+        log("No recording file found", true);
         resetRecordingState();
       }
     } else {
@@ -332,9 +419,13 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
         fs.mkdirSync(debugDir, { recursive: true });
       }
 
-      // Create debug file path with timestamp
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      debugFilePath = path.join(debugDir, `dictation-${timestamp}.ogg`);
+      // Create debug file path with local timestamp
+      const now = new Date();
+      const timestamp = now.toLocaleString("sv").replace(/[\s:]/g, "-"); // Use Swedish locale for YYYY-MM-DD HH-mm-ss format
+      const fileExt = path.extname(filePath); // Get the actual file extension (.wav or .ogg)
+      debugFilePath = path.join(debugDir, `dictation-${timestamp}${fileExt}`);
+
+      // Copy the final audio file (either WAV or OGG)
       fs.copyFileSync(filePath, debugFilePath);
       log(`Debug file copied to: ${debugFilePath}`);
     }
@@ -344,7 +435,6 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     log(`Audio file size before upload: ${stats.size} bytes`);
     const audioData = fs.createReadStream(filePath);
     log("Audio file stream created");
-
 
     log("Starting transcription request to OpenAI...");
     const transcription = await openai.audio.transcriptions.create({
@@ -399,7 +489,6 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     }
 
     log("Transcription completed and inserted successfully");
-    //vscode.window.showInformationMessage("Transcription completed successfully");
   } catch (error) {
     log(`Error processing recording: ${error}`, true);
     if (error instanceof Error) {
