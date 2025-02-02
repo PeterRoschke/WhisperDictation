@@ -53,12 +53,127 @@ function log(message: string, error: boolean = false) {
   }
 }
 
+// Helper function to show platform-specific SoX error
+async function showSoxError(error: Error): Promise<void> {
+  const platform = os.platform();
+  let message: string;
+  let action: string | undefined;
+
+  switch (platform) {
+    case "win32":
+      message = "Error accessing SoX. The extension may need to be reinstalled.";
+      action = "Reinstall Extension";
+      break;
+    case "darwin":
+      message = "Error accessing SoX. The extension may need to be reinstalled or permissions need to be granted.";
+      action = "Reinstall Extension";
+      break;
+    case "linux":
+      message = "Error accessing SoX. Please run the setup script to install SoX and configure permissions.";
+      action = "View Setup Instructions";
+      break;
+    default:
+      message = `Platform ${platform} is not supported.`;
+      return;
+  }
+
+  const selected = await vscode.window.showErrorMessage(message, action);
+
+  if (selected === "View Setup Instructions") {
+    const extensionPath = path.dirname(__dirname);
+    const instructionsPath = path.join(extensionPath, "resources", "bin", "linux", "INSTALL.txt");
+
+    if (fs.existsSync(instructionsPath)) {
+      const doc = await vscode.workspace.openTextDocument(instructionsPath);
+      await vscode.window.showTextDocument(doc);
+    }
+  } else if (selected === "Reinstall Extension") {
+    await vscode.commands.executeCommand("workbench.extensions.action.showExtensionsWithIds", ["whisperdictation"]);
+  }
+}
+
+// Helper function to verify SoX installation
+async function verifySoxInstallation(): Promise<boolean> {
+  try {
+    const soxPath = getSoxPath();
+    log(`Verifying SoX at path: ${soxPath}`);
+
+    // For Linux, first check if sox is in PATH
+    if (os.platform() === "linux" && soxPath === "sox") {
+      const checkResult = await new Promise<boolean>((resolve) => {
+        const process = spawn("which", ["sox"]);
+        process.on("close", (code) => resolve(code === 0));
+      });
+
+      if (!checkResult) {
+        log("SoX not found in PATH on Linux", true);
+        await showSoxError(new Error("SoX not found in PATH"));
+        return false;
+      }
+    } else if (!fs.existsSync(soxPath)) {
+      // For Windows and macOS, check if the bundled binary exists
+      log(`SoX binary not found at ${soxPath}`, true);
+      await showSoxError(new Error("SoX binary not found"));
+      return false;
+    }
+
+    // Test SoX functionality
+    const result = await new Promise<boolean>((resolve) => {
+      const process = spawn(soxPath, ["--version"]);
+      let output = "";
+
+      process.stdout.on("data", (data) => {
+        output += data.toString();
+      });
+
+      process.stderr.on("data", (data) => {
+        output += data.toString();
+      });
+
+      process.on("close", (code) => {
+        if (code === 0) {
+          log(`SoX version check successful: ${output.trim()}`);
+          resolve(true);
+        } else {
+          log(`SoX version check failed with code ${code}: ${output}`, true);
+          resolve(false);
+        }
+      });
+
+      process.on("error", (err) => {
+        log(`Error running SoX: ${err}`, true);
+        resolve(false);
+      });
+    });
+
+    if (!result) {
+      await showSoxError(new Error("SoX verification failed"));
+    }
+
+    return result;
+  } catch (error) {
+    log(`Error verifying SoX: ${error}`, true);
+    await showSoxError(error instanceof Error ? error : new Error(String(error)));
+    return false;
+  }
+}
+
 // Helper function to get SoX path
 function getSoxPath(): string {
   const extensionPath = path.dirname(__dirname);
-  const soxPath = path.join(extensionPath, "resources", "bin", "win32", "sox.exe");
-  log(`SoX path: ${soxPath}`);
-  return soxPath;
+  const platform = os.platform();
+
+  switch (platform) {
+    case "win32":
+      return path.join(extensionPath, "resources", "bin", "win32", "sox.exe");
+    case "darwin":
+      return path.join(extensionPath, "resources", "bin", "darwin", "sox");
+    case "linux":
+      // On Linux, we expect SoX to be installed system-wide
+      return "sox";
+    default:
+      throw new Error(`Unsupported platform: ${platform}`);
+  }
 }
 
 // Reset recording state
@@ -137,8 +252,14 @@ function getDebugDirectory(): string {
   return path.join(basePath, "WhisperDictation", "Debug");
 }
 
+// Update the startRecording function to verify SoX first
 async function startRecording(context: vscode.ExtensionContext): Promise<void> {
   try {
+    // Verify SoX installation first
+    if (!(await verifySoxInstallation())) {
+      return;
+    }
+
     // Create a temporary file for the recording
     tempFilePath = path.join(os.tmpdir(), `recording-${Date.now()}.wav`);
     log(`Recording to temporary file: ${tempFilePath}`);

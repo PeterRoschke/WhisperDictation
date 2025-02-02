@@ -1,0 +1,28 @@
+﻿WhisperDictation Linux Setup Instructions
+
+1. Make the setup script executable:
+   chmod +x setup-sox.sh
+
+2. Run the setup script:
+   ./setup-sox.sh
+
+The script will:
+- Install SoX if not already installed
+- Set up necessary audio permissions
+- Add your user to required groups
+
+If you prefer manual installation:
+
+Ubuntu/Debian:
+    sudo apt-get install sox
+
+Fedora:
+    sudo dnf install sox
+
+Arch Linux:
+    sudo pacman -S sox
+
+After installation, ensure your user has proper audio permissions:
+    sudo usermod -a -G audio,pulse-access 
+
+NOTE: You may need to log out and back in for group changes to take effect.

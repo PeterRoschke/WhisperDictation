@@ -1,30 +1,29 @@
 $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$resourcesDir = Join-Path -Path $PSScriptRoot -ChildPath ".." -Resolve
-$resourcesDir = Join-Path -Path $resourcesDir -ChildPath "resources"
-$binDir = Join-Path -Path $resourcesDir -ChildPath "bin"
-$win32Dir = Join-Path -Path $binDir -ChildPath "win32"
+$rootPath = Join-Path -Path $PSScriptRoot -ChildPath ".." -Resolve
+$resourcesPath = Join-Path -Path $rootPath -ChildPath "resources"
+$binPath = Join-Path -Path $resourcesPath -ChildPath "bin"
+$win32Path = Join-Path -Path $binPath -ChildPath "win32"
 
 Write-Host "Creating directories..."
-if (-not (Test-Path -Path $resourcesDir)) {
-    New-Item -Path $resourcesDir -ItemType Directory | Out-Null
+if (-not (Test-Path -Path $resourcesPath)) {
+    New-Item -Path $resourcesPath -ItemType Directory -Force | Out-Null
     Write-Host "Created resources directory"
 }
 
-if (-not (Test-Path -Path $binDir)) {
-    New-Item -Path $binDir -ItemType Directory | Out-Null
+if (-not (Test-Path -Path $binPath)) {
+    New-Item -Path $binPath -ItemType Directory -Force | Out-Null
     Write-Host "Created bin directory"
 }
 
-if (-not (Test-Path -Path $win32Dir)) {
-    New-Item -Path $win32Dir -ItemType Directory | Out-Null
+if (-not (Test-Path -Path $win32Path)) {
+    New-Item -Path $win32Path -ItemType Directory -Force | Out-Null
     Write-Host "Created win32 directory"
 }
 
 $soxVersion = "14.4.2"
-$soxZip = Join-Path -Path $win32Dir -ChildPath "sox.zip"
-$soxDir = Join-Path -Path $win32Dir -ChildPath "sox"
-# Using a direct download URL from a mirror
-$soxUrl = "https://downloads.sourceforge.net/project/sox/sox/14.4.2/sox-14.4.2-win32.zip"
+$soxZip = Join-Path -Path $win32Path -ChildPath "sox.zip"
+$soxDir = Join-Path -Path $win32Path -ChildPath "sox"
+$soxUrl = "https://downloads.sourceforge.net/project/sox/sox/$soxVersion/sox-$soxVersion-win32.zip"
 
 Write-Host "Downloading SoX..."
 try {
@@ -77,8 +76,11 @@ try {
         throw "sox.exe not found at: $soxExe"
     }
     
-    Move-Item -Path $soxExe -Destination $win32Dir -Force
-    Move-Item -Path (Join-Path -Path $soxBinDir -ChildPath "*.dll") -Destination $win32Dir -Force
+    # Move all necessary files to win32 directory
+    Move-Item -Path $soxExe -Destination $win32Path -Force
+    Get-ChildItem -Path $soxBinDir -Filter "*.dll" | ForEach-Object {
+        Move-Item -Path $_.FullName -Destination $win32Path -Force
+    }
 } catch {
     Write-Error "Failed to set up SoX: $_"
     exit 1
