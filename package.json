@@ -30,6 +30,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "whisperdictation.toggleDictation",
+        "title": "Toggle Dictation"
+      },
+      {
         "command": "whisperdictation.startDictation",
         "title": "Start Dictation"
       },
@@ -186,7 +190,7 @@
     },
     "keybindings": [
       {
-        "command": "whisperdictation.startDictation",
+        "command": "whisperdictation.toggleDictation",
         "key": "ctrl+insert",
         "mac": "cmd+insert",
         "when": "true"

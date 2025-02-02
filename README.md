@@ -56,7 +56,7 @@ A VS Code extension that enables voice dictation using OpenAI's Whisper API for 
 
 ## Usage
 
-1. Click the microphone icon in the status bar or press Ctrl+Insert to start recording
+1. Click the microphone icon in the status bar
 2. Speak into your microphone
 3. Click the recording icon or press Ctrl+Insert again to stop recording
 4. The transcription will be inserted at your cursor position

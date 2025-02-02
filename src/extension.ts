@@ -27,6 +27,12 @@ enum RecordingState {
   Processing = "processing",
 }
 
+// Dictation modes
+enum DictationMode {
+  Normal = "normal",
+  ClipboardOnly = "clipboard-only",
+}
+
 // Global state
 let recordingProcess: ReturnType<typeof spawn> | undefined;
 let statusBarItem: vscode.StatusBarItem;
@@ -36,6 +42,7 @@ let tempFilePath: string | undefined;
 let extensionContext: vscode.ExtensionContext;
 let recordingTimer: NodeJS.Timeout | undefined;
 let currentState: RecordingState = RecordingState.Idle;
+let currentDictationMode: DictationMode = DictationMode.Normal;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
@@ -220,6 +227,7 @@ function resetRecordingState() {
   // Reset recording state and status bar
   currentState = RecordingState.Idle;
   updateStatusBarState();
+  resetDictationMode();
 }
 
 // Update status bar based on current state
@@ -582,41 +590,48 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     log("Transcription received from OpenAI");
     log(`Transcription length: ${transcription.text.length} characters`);
 
-    // Copy to clipboard first
+    // Copy to clipboard
     await vscode.env.clipboard.writeText(transcription.text);
     log("Transcription copied to clipboard");
 
-    // Try to detect the active editor's content before paste
-    const editor = vscode.window.activeTextEditor;
-    let beforeText = "";
-    let beforePosition: vscode.Position | undefined;
+    // Only proceed with pasting if we're in normal mode
+    if (currentDictationMode === DictationMode.Normal) {
+      // Try to detect the active editor's content before paste
+      const editor = vscode.window.activeTextEditor;
+      let beforeText = "";
+      let beforePosition: vscode.Position | undefined;
 
-    if (editor) {
-      beforeText = editor.document.getText();
-      beforePosition = editor.selection.active;
-    }
-
-    // Try clipboard paste first
-    try {
-      await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
-      log("Transcription inserted using clipboard paste");
-    } catch (error) {
-      log(`Clipboard paste failed: ${error}`, true);
-      // If paste command fails and we have an editor, try direct insertion
       if (editor) {
-        await editor.edit((editBuilder) => {
-          if (editor.selection.isEmpty) {
-            editBuilder.insert(editor.selection.active, transcription.text);
-          } else {
-            editBuilder.replace(editor.selection, transcription.text);
-          }
-        });
-        log("Inserted text using editor API after paste failed");
-      } else {
-        // Both methods failed, show clipboard message
-        log("No active editor and clipboard paste failed", true);
-        vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
+        beforeText = editor.document.getText();
+        beforePosition = editor.selection.active;
       }
+
+      // Try clipboard paste first
+      try {
+        await vscode.commands.executeCommand("editor.action.clipboardPasteAction");
+        log("Transcription inserted using clipboard paste");
+      } catch (error) {
+        log(`Clipboard paste failed: ${error}`, true);
+        // If paste command fails and we have an editor, try direct insertion
+        if (editor) {
+          await editor.edit((editBuilder) => {
+            if (editor.selection.isEmpty) {
+              editBuilder.insert(editor.selection.active, transcription.text);
+            } else {
+              editBuilder.replace(editor.selection, transcription.text);
+            }
+          });
+          log("Inserted text using editor API after paste failed");
+        } else {
+          // Both methods failed, show clipboard message
+          log("No active editor and clipboard paste failed", true);
+          vscode.window.showInformationMessage("Text copied to clipboard - press Ctrl+V/Cmd+V to paste");
+        }
+      }
+    } else {
+      // In clipboard-only mode, just show a notification
+      vscode.window.showInformationMessage("Dictation copied to clipboard");
+      log("Dictation copied to clipboard (clipboard-only mode)");
     }
 
     // Save transcription text if debug is enabled
@@ -625,7 +640,7 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
       log("Transcription saved to debug file");
     }
 
-    log("Transcription completed and inserted successfully");
+    log("Transcription completed successfully");
   } catch (error) {
     log(`Error processing recording: ${error}`, true);
     if (error instanceof Error) {
@@ -804,6 +819,19 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand("whisperdictation.updateApiKey", async () => {
         log("Update API key command triggered");
         await updateApiKey();
+      }),
+      vscode.commands.registerCommand("whisperdictation.toggleDictation", async () => {
+        log("Toggle dictation command triggered");
+        if (currentState === RecordingState.Idle) {
+          // Start recording in clipboard-only mode
+          currentDictationMode = DictationMode.ClipboardOnly;
+          log("Starting recording in clipboard-only mode");
+          await startRecording(context);
+        } else if (currentState === RecordingState.Recording) {
+          // Stop recording
+          log("Stopping recording from toggle command");
+          await stopRecording();
+        }
       })
     );
 
@@ -854,4 +882,10 @@ export function deactivate() {
   }
   recordingProcess = undefined;
   openai = undefined;
+}
+
+// Add after the resetRecordingState function
+function resetDictationMode() {
+  currentDictationMode = DictationMode.Normal;
+  log("Reset dictation mode to normal");
 }
