@@ -163,7 +163,7 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "default",
       // Buffer size (smaller for more frequent writes)
       "--buffer",
-      "2048",
+      "1024",
       // reduce logging to errors, supress audio meter
       "-V2",
       "-q",
@@ -173,13 +173,12 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       // Output file
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
       // Effects come after input/output files
-      "gain",
-      "6", // Boost input by 6dB
+      // "gain",
+      // "10", // Boost input by 10dB
     ];
 
     //log(`Spawning process with args: ${JSON.stringify(args, null, 2)}`);
     log(`Full command that would be executed: ${soxPath} ${args.join(" ")}`);
-    log("Audio effects applied: gain (6dB boost)");
 
     // Spawn the recording process
     recordingProcess = spawn(soxPath, args, {
