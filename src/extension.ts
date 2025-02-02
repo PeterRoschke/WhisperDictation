@@ -10,6 +10,9 @@ import * as path from "path";
 import * as os from "os";
 import { spawn } from "child_process";
 
+// Build time is injected by webpack
+declare const BUILD_TIME: string;
+
 // Type definitions
 interface AudioDevice {
   name: string;
@@ -35,7 +38,7 @@ let recordingTimer: NodeJS.Timeout | undefined;
 let currentState: RecordingState = RecordingState.Idle;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
-const MAX_FILE_SIZE_BYTES = 0.5 * 1024 * 1024; // 2MB limit before compression
+const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
 const MAX_FINAL_SIZE_BYTES = 25 * 1024 * 1024; // 25MB absolute limit for Whisper API
 
 // Helper function for logging
@@ -167,13 +170,16 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       // Output format - WAV with minimal header
       "-t",
       "wav",
-
       // Output file
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
+      // Effects come after input/output files
+      "gain",
+      "6", // Boost input by 6dB
     ];
 
-    log(`Spawning process with args: ${JSON.stringify(args, null, 2)}`);
+    //log(`Spawning process with args: ${JSON.stringify(args, null, 2)}`);
     log(`Full command that would be executed: ${soxPath} ${args.join(" ")}`);
+    log("Audio effects applied: gain (6dB boost)");
 
     // Spawn the recording process
     recordingProcess = spawn(soxPath, args, {
@@ -587,7 +593,8 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create output channel first for logging
     outputChannel = vscode.window.createOutputChannel("WhisperDictation");
 
-    log("Extension activation started. Code version 2025-01-31.3");
+    log("Extension activation started");
+    log(`Build time: ${BUILD_TIME}`);
     log(`Extension path: ${context.extensionPath}`);
     log(`OS platform: ${os.platform()}`);
     log(`OS release: ${os.release()}`);

@@ -11,3 +11,12 @@ resources/bin/darwin/sox
 resources/bin/linux/sox
 # Debug files
 WhisperDictation/Debug/
+
+# Test files
+*.ogg
+*.wav
+*-test.js
+test-*.js
+
+# Debug recordings
+DictationAudio/
