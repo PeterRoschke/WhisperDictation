@@ -158,7 +158,13 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "-t",
       "waveaudio",
       "default",
-      // Output file with Vorbis encoding
+      // Buffer size (smaller for more frequent writes)
+      "--buffer",
+      "1024",
+      // Compression setting (must come before output format)
+      "-C",
+      "0",
+      // Output format
       "-t",
       "vorbis",
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
@@ -199,25 +205,13 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
 
     recordingProcess.on("close", (code, signal) => {
       log(`Recording process closed with code ${code} and signal ${signal}`);
+
+      // Only handle transcription if we're not already processing
+      // This prevents double transcription when stopping manually
       if (code !== 0 && signal !== "SIGTERM" && currentState === RecordingState.Recording) {
         log("Recording process closed unexpectedly", true);
         stopRecording();
         vscode.window.showErrorMessage("Recording stopped unexpectedly");
-      } else if ((code === 0 || signal === "SIGTERM") && tempFilePath) {
-        // Check if we have a valid recording
-        const stats = fs.statSync(tempFilePath);
-        log(`Recording file size: ${stats.size} bytes`);
-        if (stats.size > 0) {
-          log("Valid recording file found, proceeding with transcription");
-          currentState = RecordingState.Processing;
-          updateStatusBarState();
-          transcribeRecording(tempFilePath, context);
-        } else {
-          log("Recording file is empty", true);
-          vscode.window.showErrorMessage("Recording failed - no audio data captured.");
-          fs.unlinkSync(tempFilePath);
-          resetRecordingState();
-        }
       }
     });
 
@@ -239,14 +233,34 @@ async function stopRecording() {
   try {
     log("Stopping recording process...");
 
-    // Kill the recording process if it exists
+    // Only proceed if we're actually recording
+    if (currentState !== RecordingState.Recording) {
+      log("Not currently recording, ignoring stop request");
+      return;
+    }
+
+    // Set state to processing to prevent multiple transcription attempts
+    currentState = RecordingState.Processing;
+    updateStatusBarState();
+
+    // wait 1 second before killing the process
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // send sigterm to the process
+    log("Sending SIGTERM to recording process");
     if (recordingProcess) {
+      recordingProcess.kill("SIGTERM");
+    }
+
+    // wait 200ms before final cleanup
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Kill the recording process if it still exists
+    if (recordingProcess) {
+      log("Killing recording process");
       recordingProcess.kill();
       recordingProcess = undefined;
     }
-
-    // Wait a moment for the file to be written
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Check if we have a valid recording
     if (tempFilePath && fs.existsSync(tempFilePath)) {
@@ -254,8 +268,7 @@ async function stopRecording() {
       log(`Recording file size: ${stats.size} bytes`);
       if (stats.size > 0) {
         log("Valid recording file found, proceeding with transcription");
-        currentState = RecordingState.Processing;
-        updateStatusBarState();
+        await transcribeRecording(tempFilePath, extensionContext);
       } else {
         log("Recording file is empty", true);
         fs.unlinkSync(tempFilePath);
@@ -332,24 +345,6 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     const audioData = fs.createReadStream(filePath);
     log("Audio file stream created");
 
-    // Log file details
-    log(
-      "Audio file details: " +
-        JSON.stringify(
-          {
-            tempPath: filePath,
-            debugPath: debugFilePath || "Debug files disabled",
-            sizeInMB: (stats.size / (1024 * 1024)).toFixed(2) + " MB",
-            format: "OGG Vorbis",
-            sampleRate: "16000 Hz",
-            channels: "1 (mono)",
-            encoding: "16-bit PCM",
-            bits: "16",
-          },
-          null,
-          2
-        )
-    );
 
     log("Starting transcription request to OpenAI...");
     const transcription = await openai.audio.transcriptions.create({
