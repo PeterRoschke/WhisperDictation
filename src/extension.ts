@@ -699,9 +699,18 @@ async function checkMicrophoneAccess(): Promise<boolean> {
   try {
     log("Checking microphone access...");
     const soxPath = getSoxPath();
+    const platform = os.platform();
+
+    // Platform-specific input type
+    let inputType = "waveaudio"; // Default for Windows
+    if (platform === "darwin") {
+      inputType = "coreaudio";
+    } else if (platform === "linux") {
+      inputType = "alsa";
+    }
 
     // Try to record a brief sample using the default device
-    const process = spawn(soxPath, ["-t", "waveaudio", "-d", "-n", "trim", "0", "0.1"]);
+    const process = spawn(soxPath, ["-t", inputType, "-d", "-n", "trim", "0", "0.1"]);
     let output = "";
 
     return new Promise<boolean>((resolve) => {

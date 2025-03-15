@@ -2,6 +2,13 @@
 
 A VS Code extension that enables voice dictation using OpenAI's Whisper API for speech-to-text transcription.
 
+## Version
+
+Current version: 0.1.0
+
+Latest changes:
+- Improved Linux compatibility and functionality
+
 ## Features
 
 - Record audio directly from your system's default microphone
