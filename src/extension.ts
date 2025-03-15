@@ -190,7 +190,7 @@ function getSoxPath(): string {
       }
       return path.join(extensionPath, "resources", "bin", "darwin", "sox");
     case "linux":
-      return "sox"; // Use system-installed SoX
+      return "/usr/bin/sox"; // Use full path to system-installed SoX
     default:
       throw new Error(`Unsupported platform: ${platform}`);
   }
@@ -287,6 +287,7 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
 
     // Build the exact command we know works
     const soxPath = getSoxPath();
+    const platform = os.platform();
 
     // Format options must come before input/output files
     const args = [
@@ -301,8 +302,23 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "signed-integer",
       // Input specification
       "-t",
-      "waveaudio",
-      "default",
+    ];
+    
+    // Platform-specific input type
+    if (platform === "win32") {
+      args.push("waveaudio");
+      args.push("default");
+    } else if (platform === "darwin") {
+      args.push("coreaudio");
+      args.push("default");
+    } else if (platform === "linux") {
+      // On Linux, use alsa which is the standard audio driver
+      args.push("alsa");
+      args.push("default");
+    }
+    
+    // Add the rest of the arguments
+    args.push(
       // Buffer size (smaller for more frequent writes)
       "--buffer",
       "1024",
@@ -314,10 +330,7 @@ async function startRecording(context: vscode.ExtensionContext): Promise<void> {
       "wav",
       // Output file
       tempFilePath.replace(/\\/g, "/"), // Convert Windows path separators
-      // Effects come after input/output files
-      // "gain",
-      // "10", // Boost input by 10dB
-    ];
+    );
 
     //log(`Spawning process with args: ${JSON.stringify(args, null, 2)}`);
     log(`Full command that would be executed: ${soxPath} ${args.join(" ")}`);

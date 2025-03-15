@@ -15,7 +15,7 @@ install_sox() {
     else
         echo "Could not detect package manager. Please install SoX manually."
         exit 1
-    }
+    fi
 }
 
 # Function to check and set audio permissions

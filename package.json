@@ -203,11 +203,11 @@
     "watch": "webpack --watch",
     "clean": "node -e \"const { rmSync } = require('fs'); ['dist'].forEach(p => { try { rmSync(p, { recursive: true, force: true }); } catch (e) {} }); require('glob').sync('*.vsix').forEach(f => { try { rmSync(f); } catch (e) {} });\"",
     "clean-all": "node -e \"const { rmSync } = require('fs'); ['dist', 'resources/bin'].forEach(p => { try { rmSync(p, { recursive: true, force: true }); } catch (e) {} }); require('glob').sync('*.vsix').forEach(f => { try { rmSync(f); } catch (e) {} });\"",
-    "build": "powershell -ExecutionPolicy Bypass -File scripts/build.ps1 -NoClean",
-    "build:clean": "powershell -ExecutionPolicy Bypass -File scripts/build.ps1",
-    "build:clean-all": "npm run clean-all && powershell -ExecutionPolicy Bypass -File scripts/build.ps1",
+    "build": "npm run compile && npx vsce package --no-dependencies",
+    "build:clean": "npm run clean && npm run build",
+    "build:clean-all": "npm run clean-all && npm run build",
     "lint": "eslint src",
-    "download-sox": "powershell -ExecutionPolicy Bypass -File scripts/download-sox.ps1"
+    "download-sox": "node -e \"const os = require('os'); if (os.platform() === 'win32') { const { spawnSync } = require('child_process'); spawnSync('powershell', ['-ExecutionPolicy', 'Bypass', '-File', 'scripts/download-sox.ps1'], {stdio: 'inherit'}); } else if (os.platform() === 'linux') { console.log('On Linux, SoX should be installed via package manager. Run: sudo apt-get install sox'); }\""
   },
   "dependencies": {
     "openai": "^4.28.0"
