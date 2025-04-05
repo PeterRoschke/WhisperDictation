@@ -2,7 +2,6 @@ out
 dist
 node_modules
 .vscode-test/
-*.vsix
 .DS_Store
 # Ignore SoX binaries
 resources/bin/win32/sox.exe
