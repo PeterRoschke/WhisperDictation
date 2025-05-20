@@ -43,6 +43,7 @@ let extensionContext: vscode.ExtensionContext;
 let recordingTimer: NodeJS.Timeout | undefined;
 let currentState: RecordingState = RecordingState.Idle;
 let currentDictationMode: DictationMode = DictationMode.Normal;
+let recordingStartTime: number | undefined;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
@@ -198,6 +199,7 @@ function getSoxPath(): string {
 
 // Reset recording state
 function resetRecordingState() {
+  recordingStartTime = undefined; // Reset recording start time
   // Clear recording timer
   if (recordingTimer) {
     clearTimeout(recordingTimer);
@@ -275,6 +277,7 @@ function getDebugDirectory(): string {
 
 // Update the startRecording function to verify SoX first
 async function startRecording(context: vscode.ExtensionContext): Promise<void> {
+  recordingStartTime = Date.now();
   try {
     // Verify SoX installation first
     if (!(await verifySoxInstallation())) {
@@ -441,6 +444,41 @@ async function stopRecording() {
     if (currentState !== RecordingState.Recording) {
       log("Not currently recording, ignoring stop request");
       return;
+    }
+
+    // Check recording duration
+    if (recordingStartTime) {
+      const duration = Date.now() - recordingStartTime;
+      if (duration < 1000) {
+        log(`Recording duration (${duration} ms) is less than 1 second. Ignoring.`);
+        vscode.window.showInformationMessage("Recording was too short and has been ignored.");
+        if (recordingProcess) {
+          try {
+            recordingProcess.kill("SIGTERM"); // Send SIGTERM first
+            // A short delay to see if it terminates gracefully
+            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+            if (!recordingProcess.killed) {
+              recordingProcess.kill("SIGKILL"); // Force kill if not terminated
+            }
+          } catch (error) {
+            log(`Error killing recording process for short recording: ${error}`, true);
+          }
+          recordingProcess = undefined;
+        }
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+          try {
+            fs.unlinkSync(tempFilePath);
+          } catch (error) {
+            log(`Error cleaning up temp file for short recording: ${error}`, true);
+          }
+          tempFilePath = undefined;
+        }
+        resetRecordingState();
+        return;
+      }
+    } else {
+      log("recordingStartTime is undefined. Cannot determine recording duration. Proceeding with transcription.", true);
+      // Fallback to normal processing if recordingStartTime is not set for some reason
     }
 
     // Set state to processing to prevent multiple transcription attempts
@@ -911,3 +949,49 @@ function resetDictationMode() {
   currentDictationMode = DictationMode.Normal;
   log("Reset dictation mode to normal");
 }
+
+/*
+MANUAL TEST PLAN for "Ignore Short Recordings" Feature:
+
+Test Case 1: Recording shorter than 1 second
+1. Preparation:
+   - Ensure the extension is loaded and activated in VS Code.
+   - Ensure the OpenAI API key is correctly set.
+   - Have a microphone connected and configured.
+2. Execution:
+   - Trigger the "Start Dictation" command (e.g., by clicking the status bar item or using a keybinding).
+   - Immediately (as quickly as possible, aiming for well under 1 second) trigger the "Stop Dictation" command.
+3. Expected Outcome:
+   - A VS Code information message should appear, stating "Recording was too short and has been ignored."
+   - The status bar item should return to the "Start Dictation" state.
+   - No transcription should be attempted (i.e., no "Processing..." state, no text inserted, no text copied to clipboard related to this short recording).
+   - Check the extension's output channel logs:
+     - A log message similar to "Recording duration (X ms) is less than 1 second. Ignoring." should be present.
+     - No logs indicating transcription initiation for this attempt should be present.
+     - The temporary audio file should have been deleted.
+
+Test Case 2: Recording longer than 1 second
+1. Preparation:
+   - Same as Test Case 1.
+2. Execution:
+   - Trigger the "Start Dictation" command.
+   - Wait for at least 2-3 seconds while speaking a short phrase.
+   - Trigger the "Stop Dictation" command.
+3. Expected Outcome:
+   - The status bar item should briefly show "Processing..."
+   - The spoken phrase should be transcribed and inserted into the active editor (if in normal dictation mode) or copied to the clipboard.
+   - The extension's output channel logs should show normal processing and transcription logs.
+   - No message about the recording being too short should appear.
+
+Test Case 3: Rapid start/stop/start (ensure state resets correctly)
+1. Preparation:
+   - Same as Test Case 1.
+2. Execution:
+   - Perform Test Case 1 (start and stop very quickly).
+   - Verify Test Case 1's expected outcome.
+   - Immediately after, perform Test Case 2 (start, wait 2-3 seconds, stop).
+3. Expected Outcome:
+   - The first (short) recording should be ignored as per Test Case 1.
+   - The second (longer) recording should be processed successfully as per Test Case 2.
+   - This verifies that `recordingStartTime` and other states are correctly reset after an ignored recording.
+*/
