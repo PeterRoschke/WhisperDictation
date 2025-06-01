@@ -9,6 +9,7 @@ Current version: 0.2.0
 Latest changes:
 - Added support for new OpenAI transcription models (GPT-4o transcribe and GPT-4o mini transcribe)
 - Added model selection configuration with pricing information
+- Added intelligent system prompts for improved transcription accuracy in development environments
 - Default model changed to GPT-4o mini transcribe for better cost efficiency
 
 ## Features
@@ -18,6 +19,10 @@ Latest changes:
   - **GPT-4o mini transcribe** (default) - Fast and cost-effective ($0.00075/minute)
   - **GPT-4o transcribe** - Highly accurate for challenging audio ($0.0025/minute)
   - **Whisper-1** - Original general-purpose model ($0.006/minute)
+- **Smart Development Context**: Intelligent system prompts that help transcription models better recognize:
+  - Technical terms and programming concepts
+  - Code-related discussions and terminology
+  - Development environment vocabulary
 - Support for multiple languages
 - Optional debug file saving for troubleshooting
 
@@ -77,7 +82,23 @@ Latest changes:
 
 - `whisperdictation.language`: Set the transcription language (defaults to English)
 - `whisperdictation.transcriptionModel`: Choose the OpenAI transcription model (defaults to GPT-4o mini transcribe)
+- `whisperdictation.useSystemPrompts`: Enable intelligent prompts for better transcription accuracy in development environments (defaults to enabled)
 - `whisperdictation.saveDebugFiles`: Enable saving of audio and transcription files for debugging to your default Application directory.
+
+### System Prompts
+
+The extension uses model-specific system prompts to improve transcription accuracy for development environments:
+
+- **For Whisper-1**: Provides context about technical terms and development discussions
+- **For GPT-4o models**: More sophisticated prompts that prioritize clarity for technical terms and code references while ensuring clean output
+
+These prompts help the models better understand:
+- Programming language keywords and syntax
+- Technical terminology and acronyms
+- Code-related conversations
+- Development workflow discussions
+
+You can disable system prompts in the settings if you prefer the default model behavior.
 
 ## Troubleshooting
 

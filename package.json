@@ -185,7 +185,7 @@
           "type": "boolean",
           "default": false,
           "description": "Save audio recordings and transcriptions to the application data directory for debugging purposes",
-          "order": 3
+          "order": 4
         },
         "whisperdictation.transcriptionModel": {
           "type": "string",
@@ -203,6 +203,13 @@
           "description": "Select the OpenAI transcription model to use. Pricing shown is per minute of audio.",
           "markdownDescription": "Select the OpenAI transcription model to use:\n\n- **whisper-1**: Original model ($0.006/minute)\n- **gpt-4o-transcribe**: High accuracy ($0.0025/minute)\n- **gpt-4o-mini-transcribe**: Fast & cost-effective ($0.00075/minute)",
           "order": 1
+        },
+        "whisperdictation.useSystemPrompts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable system prompts to improve transcription accuracy for development environments. Helps with technical terms and code-related discussions.",
+          "markdownDescription": "Enable system prompts to improve transcription accuracy for development environments.\n\nWhen enabled, the extension provides context-aware prompts to the transcription models to:\n- Better recognize technical terms and programming concepts\n- Improve accuracy for code-related discussions\n- Ensure clean transcription output without extra commentary",
+          "order": 3
         }
       }
     },

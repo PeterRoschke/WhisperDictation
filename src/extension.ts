@@ -558,17 +558,21 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
       }
     }
 
-    // Get the language setting
-    const language = vscode.workspace.getConfiguration("whisperdictation").get<string>("language") || "en";
+    // Get configuration settings
+    const config = vscode.workspace.getConfiguration("whisperdictation");
+    const language = config.get<string>("language") || "en";
+    const selectedModel = config.get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
+    const useSystemPrompts = config.get<boolean>("useSystemPrompts") ?? true;
+    const shouldSaveDebug = config.get<boolean>("saveDebugFiles") || false;
+    
     log(`Using language: ${language}`);
+    log(`Using transcription model: ${selectedModel}`);
+    log(`System prompts enabled: ${useSystemPrompts}`);
 
     // Create OpenAI client
     const openai = new OpenAI({ apiKey });
     log("OpenAI client initialized");
 
-    // Get configuration for debug file saving
-    const config = vscode.workspace.getConfiguration("whisperdictation");
-    const shouldSaveDebug = config.get<boolean>("saveDebugFiles") || false;
     let debugFilePath: string | undefined;
 
     if (shouldSaveDebug) {
@@ -598,20 +602,30 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
 
     log("Starting transcription request to OpenAI...");
     
-    // Get the selected transcription model from configuration
-    const selectedModel = config.get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
-    log(`Using transcription model: ${selectedModel}`);
-    
-    const transcription = await openai.audio.transcriptions.create({
+    // Prepare transcription options
+    const transcriptionOptions: OpenAI.Audio.Transcriptions.TranscriptionCreateParams = {
       file: audioData,
       model: selectedModel,
       language: language,
-    });
+      response_format: "text", // Ensures plain text output
+    };
+
+    // Add system prompt if enabled
+    if (useSystemPrompts) {
+      const systemPrompt = getSystemPrompt(selectedModel);
+      transcriptionOptions.prompt = systemPrompt;
+      log(`Using system prompt for ${selectedModel}: ${systemPrompt}`);
+    }
+    
+    const transcription = await openai.audio.transcriptions.create(transcriptionOptions);
     log("Transcription received from OpenAI");
-    log(`Transcription length: ${transcription.text.length} characters`);
+    
+    // Handle response based on format - when response_format is "text", we get a string directly
+    const transcriptionText = typeof transcription === 'string' ? transcription : transcription.text;
+    log(`Transcription length: ${transcriptionText.length} characters`);
 
     // Copy to clipboard
-    await vscode.env.clipboard.writeText(transcription.text);
+    await vscode.env.clipboard.writeText(transcriptionText);
     log("Transcription copied to clipboard");
 
     // Only proceed with pasting if we're in normal mode
@@ -636,9 +650,9 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
         if (editor) {
           await editor.edit((editBuilder) => {
             if (editor.selection.isEmpty) {
-              editBuilder.insert(editor.selection.active, transcription.text);
+              editBuilder.insert(editor.selection.active, transcriptionText);
             } else {
-              editBuilder.replace(editor.selection, transcription.text);
+              editBuilder.replace(editor.selection, transcriptionText);
             }
           });
           log("Inserted text using editor API after paste failed");
@@ -656,7 +670,7 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
 
     // Save transcription text if debug is enabled
     if (shouldSaveDebug && debugFilePath) {
-      fs.writeFileSync(debugFilePath.replace(/\.(wav|ogg)$/, "") + ".txt", transcription.text);
+      fs.writeFileSync(debugFilePath.replace(/\.(wav|ogg)$/, "") + ".txt", transcriptionText);
       log("Transcription saved to debug file");
     }
 
@@ -930,4 +944,20 @@ export function deactivate() {
 function resetDictationMode() {
   currentDictationMode = DictationMode.Normal;
   log("Reset dictation mode to normal");
+}
+
+// Generate system prompt based on the selected model
+function getSystemPrompt(modelName: string): string {
+  switch (modelName) {
+    case "whisper-1":
+      return "Transcribe the following audio accurately. Focus on spoken content, including any technical terms or code-related discussions relevant to a development environment. Provide only the spoken text.";
+    
+    case "gpt-4o-transcribe":
+    case "gpt-4o-mini-transcribe":
+      return "Transcribe the audio accurately. This transcription is for use in a software development environment, so prioritize clarity for technical terms and code references. Output only the spoken text, without any preambles or extraneous remarks.";
+    
+    default:
+      // Fallback for unknown models
+      return "Transcribe the audio accurately and provide only the spoken text.";
+  }
 }
