@@ -2,7 +2,7 @@
   "name": "whisperdictation",
   "displayName": "WhisperDictation",
   "description": "Add Whisper Speech to Text typing to VSCode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local-publisher",
   "license": "MIT",
   "repository": {
@@ -178,13 +178,31 @@
             "Vietnamese",
             "Welsh"
           ],
-          "description": "Language code for transcription"
+          "description": "Language code for transcription",
+          "order": 2
         },
         "whisperdictation.saveDebugFiles": {
           "type": "boolean",
           "default": false,
           "description": "Save audio recordings and transcriptions to the application data directory for debugging purposes",
-          "order": 2
+          "order": 3
+        },
+        "whisperdictation.transcriptionModel": {
+          "type": "string",
+          "default": "gpt-4o-mini-transcribe",
+          "enum": [
+            "whisper-1",
+            "gpt-4o-transcribe",
+            "gpt-4o-mini-transcribe"
+          ],
+          "enumDescriptions": [
+            "OpenAI's original general-purpose speech-to-text model ($0.006/minute)",
+            "Latest highly accurate transcription model from GPT-4o family ($0.0025/minute)",
+            "Faster and cost-effective transcription model from GPT-4o family ($0.00075/minute)"
+          ],
+          "description": "Select the OpenAI transcription model to use. Pricing shown is per minute of audio.",
+          "markdownDescription": "Select the OpenAI transcription model to use:\n\n- **whisper-1**: Original model ($0.006/minute)\n- **gpt-4o-transcribe**: High accuracy ($0.0025/minute)\n- **gpt-4o-mini-transcribe**: Fast & cost-effective ($0.00075/minute)",
+          "order": 1
         }
       }
     },

@@ -232,7 +232,9 @@ function resetRecordingState() {
 
 // Update status bar based on current state
 function updateStatusBarState() {
-  if (!statusBarItem) return;
+  if (!statusBarItem) {
+    return;
+  }
 
   switch (currentState) {
     case RecordingState.Idle:
@@ -595,9 +597,14 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     log("Audio file stream created");
 
     log("Starting transcription request to OpenAI...");
+    
+    // Get the selected transcription model from configuration
+    const selectedModel = config.get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
+    log(`Using transcription model: ${selectedModel}`);
+    
     const transcription = await openai.audio.transcriptions.create({
       file: audioData,
-      model: "whisper-1",
+      model: selectedModel,
       language: language,
     });
     log("Transcription received from OpenAI");
@@ -765,11 +772,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
     log("Extension activation started");
     log(`Build time: ${BUILD_TIME}`);
+    log(`WhisperDictation version: ${context.extension.packageJSON.version}`);
     log(`Extension path: ${context.extensionPath}`);
     log(`OS platform: ${os.platform()}`);
     log(`OS release: ${os.release()}`);
     log(`OS architecture: ${process.arch}`);
     log(`Process versions: ${JSON.stringify(process.versions, null, 2)}`);
+
+    // Log the current transcription model configuration
+    const config = vscode.workspace.getConfiguration("whisperdictation");
+    const currentModel = config.get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
+    log(`Current transcription model: ${currentModel}`);
 
     // Show warning for Apple Silicon Macs
     if (isAppleSilicon()) {
@@ -853,6 +866,13 @@ export async function activate(context: vscode.ExtensionContext) {
           // Stop recording
           log("Stopping recording from toggle command");
           await stopRecording();
+        }
+      }),
+      // Listen for configuration changes
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("whisperdictation.transcriptionModel")) {
+          const newModel = vscode.workspace.getConfiguration("whisperdictation").get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
+          log(`Transcription model changed to: ${newModel}`);
         }
       })
     );

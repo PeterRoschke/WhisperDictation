@@ -1,18 +1,23 @@
 # WhisperDictation
 
-A VS Code extension that enables voice dictation using OpenAI's Whisper API for speech-to-text transcription.
+A VS Code extension that enables voice dictation using OpenAI's Whisper and GPT-4o transcription models for speech-to-text transcription.
 
 ## Version
 
-Current version: 0.1.0
+Current version: 0.2.0
 
 Latest changes:
-- Improved Linux compatibility and functionality
+- Added support for new OpenAI transcription models (GPT-4o transcribe and GPT-4o mini transcribe)
+- Added model selection configuration with pricing information
+- Default model changed to GPT-4o mini transcribe for better cost efficiency
 
 ## Features
 
 - Record audio directly from your system's default microphone
-- Transcribe speech to text using OpenAI's Whisper API
+- Transcribe speech to text using OpenAI's latest transcription models:
+  - **GPT-4o mini transcribe** (default) - Fast and cost-effective ($0.00075/minute)
+  - **GPT-4o transcribe** - Highly accurate for challenging audio ($0.0025/minute)
+  - **Whisper-1** - Original general-purpose model ($0.006/minute)
 - Support for multiple languages
 - Optional debug file saving for troubleshooting
 
@@ -71,7 +76,8 @@ Latest changes:
 ## Configuration
 
 - `whisperdictation.language`: Set the transcription language (defaults to English)
-- `whisperdictation.saveDebugFiles`: Enable saving of audio and transcription files for debugging to your defaut Application directory.
+- `whisperdictation.transcriptionModel`: Choose the OpenAI transcription model (defaults to GPT-4o mini transcribe)
+- `whisperdictation.saveDebugFiles`: Enable saving of audio and transcription files for debugging to your default Application directory.
 
 ## Troubleshooting
 
