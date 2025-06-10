@@ -43,6 +43,7 @@ let extensionContext: vscode.ExtensionContext;
 let recordingTimer: NodeJS.Timeout | undefined;
 let currentState: RecordingState = RecordingState.Idle;
 let currentDictationMode: DictationMode = DictationMode.Normal;
+let transcriptionAbortController: AbortController | undefined;
 
 const OPENAI_API_KEY_SECRET = "openai-key";
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
@@ -214,6 +215,17 @@ function resetRecordingState() {
     recordingProcess = undefined;
   }
 
+  // Abort transcription if in progress
+  if (transcriptionAbortController) {
+    try {
+      transcriptionAbortController.abort();
+      log("Transcription request aborted");
+    } catch (error) {
+      log(`Error aborting transcription: ${error}`, true);
+    }
+    transcriptionAbortController = undefined;
+  }
+
   // Clean up temp file
   if (tempFilePath && fs.existsSync(tempFilePath)) {
     try {
@@ -248,9 +260,9 @@ function updateStatusBarState() {
       statusBarItem.tooltip = "Recording in progress";
       break;
     case RecordingState.Processing:
-      statusBarItem.text = "$(sync~spin) Processing...";
-      statusBarItem.command = undefined;
-      statusBarItem.tooltip = "Transcribing audio...";
+      statusBarItem.text = "$(sync~spin) Processing... Click to Cancel";
+      statusBarItem.command = "whisperdictation.cancelProcessing";
+      statusBarItem.tooltip = "Transcribing audio... Click to cancel";
       break;
   }
 }
@@ -573,6 +585,9 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     const openai = new OpenAI({ apiKey });
     log("OpenAI client initialized");
 
+    // Create abort controller for this transcription
+    transcriptionAbortController = new AbortController();
+
     let debugFilePath: string | undefined;
 
     if (shouldSaveDebug) {
@@ -617,7 +632,10 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
       log(`Using system prompt for ${selectedModel}: ${systemPrompt}`);
     }
     
-    const transcription = await openai.audio.transcriptions.create(transcriptionOptions);
+    // Add abort signal to the request
+    const transcription = await openai.audio.transcriptions.create(transcriptionOptions, {
+      signal: transcriptionAbortController?.signal
+    });
     log("Transcription received from OpenAI");
     
     // Handle response based on format - when response_format is "text", we get a string directly
@@ -679,6 +697,14 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     log(`Error processing recording: ${error}`, true);
     if (error instanceof Error) {
       log(`Error stack trace: ${error.stack}`, true);
+      
+      // Check if this was an abort error
+      if (error.name === "AbortError" || error.message.includes("aborted")) {
+        log("Transcription was cancelled by user");
+        vscode.window.showInformationMessage("Transcription cancelled");
+        return; // Don't show error message for user-initiated cancellation
+      }
+      
       // Check specifically for API key related errors
       const errorMessage = error.message;
       if (
@@ -859,6 +885,13 @@ export async function activate(context: vscode.ExtensionContext) {
         log("Stop dictation command triggered");
         if (currentState === RecordingState.Recording) {
           await stopRecording();
+        }
+      }),
+      vscode.commands.registerCommand("whisperdictation.cancelProcessing", async () => {
+        log("Cancel processing command triggered");
+        if (currentState === RecordingState.Processing) {
+          log("Cancelling transcription in progress");
+          resetRecordingState();
         }
       }),
       vscode.commands.registerCommand("whisperdictation.openSettings", async () => {
