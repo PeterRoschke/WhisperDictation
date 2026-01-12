@@ -49,6 +49,23 @@ const OPENAI_API_KEY_SECRET = "openai-key";
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2MB limit before compression
 const MAX_FINAL_SIZE_BYTES = 25 * 1024 * 1024; // 25MB absolute limit for Whisper API
 
+function getOpenAIBaseUrlOverride(): string | undefined {
+  const config = vscode.workspace.getConfiguration("whisperdictation");
+  const raw = config.get<string>("openaiBaseUrl") ?? "";
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function createOpenAIClient(apiKey: string): OpenAI {
+  const baseURL = getOpenAIBaseUrlOverride();
+  if (baseURL) {
+    log(`Using OpenAI base URL override: ${baseURL}`);
+    return new OpenAI({ apiKey, baseURL });
+  }
+
+  return new OpenAI({ apiKey });
+}
+
 // Helper function for logging
 function log(message: string, error: boolean = false) {
   const timestamp = new Date().toISOString();
@@ -558,13 +575,22 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     updateStatusBarState();
 
     // Get the OpenAI API key from the extension's secrets
-    const apiKey = await context.secrets.get(OPENAI_API_KEY_SECRET);
+    let apiKey = await context.secrets.get(OPENAI_API_KEY_SECRET);
     if (!apiKey) {
       log("OpenAI API key not found");
       const keyUpdated = await promptForApiKey();
       if (!keyUpdated) {
         log("No API key provided by user");
         vscode.window.showErrorMessage('OpenAI API key not found. Please set it using the "Set OpenAI API Key" command.');
+        resetRecordingState();
+        return;
+      }
+
+      // Re-fetch after user updates the key
+      apiKey = await context.secrets.get(OPENAI_API_KEY_SECRET);
+      if (!apiKey) {
+        log("OpenAI API key still not found after update", true);
+        vscode.window.showErrorMessage("OpenAI API key not found after update. Please try again.");
         resetRecordingState();
         return;
       }
@@ -582,7 +608,7 @@ async function transcribeRecording(filePath: string, context: vscode.ExtensionCo
     log(`System prompts enabled: ${useSystemPrompts}`);
 
     // Create OpenAI client
-    const openai = new OpenAI({ apiKey });
+    const openai = createOpenAIClient(apiKey);
     log("OpenAI client initialized");
 
     // Create abort controller for this transcription
@@ -860,7 +886,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const existingApiKey = await context.secrets.get(OPENAI_API_KEY_SECRET);
     if (existingApiKey) {
       log("Found existing API key, initializing OpenAI client");
-      openai = new OpenAI({ apiKey: existingApiKey });
+      openai = createOpenAIClient(existingApiKey);
     } else {
       log("No API key found, will prompt user when needed");
     }
@@ -921,6 +947,17 @@ export async function activate(context: vscode.ExtensionContext) {
           const newModel = vscode.workspace.getConfiguration("whisperdictation").get<string>("transcriptionModel") || "gpt-4o-mini-transcribe";
           log(`Transcription model changed to: ${newModel}`);
         }
+
+        // If the OpenAI base URL changes and we already have a client, re-initialize it
+        if (e.affectsConfiguration("whisperdictation.openaiBaseUrl")) {
+          log("OpenAI base URL override changed");
+          void context.secrets.get(OPENAI_API_KEY_SECRET).then((key) => {
+            if (key) {
+              openai = createOpenAIClient(key);
+              log("OpenAI client re-initialized after base URL change");
+            }
+          });
+        }
       })
     );
 
@@ -957,7 +994,7 @@ async function updateApiKey() {
   if (apiKey) {
     await extensionContext.secrets.store(OPENAI_API_KEY_SECRET, apiKey);
     // Initialize OpenAI client with the new key
-    openai = new OpenAI({ apiKey });
+    openai = createOpenAIClient(apiKey);
     vscode.window.showInformationMessage("API key saved securely");
     return true;
   }

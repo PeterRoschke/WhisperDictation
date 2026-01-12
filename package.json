@@ -55,6 +55,13 @@
       "type": "object",
       "title": "Whisper Dictation",
       "properties": {
+        "whisperdictation.openaiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override the OpenAI API base URL used by the SDK. Leave empty to use the built-in default.",
+          "markdownDescription": "Override the OpenAI API base URL used by the SDK.\n\n- Leave empty to use the built-in default\n- Set this when using an OpenAI-compatible proxy or alternative endpoint (e.g. self-hosted gateway)\n\nExample: `https://api.openai.com/v1`",
+          "order": 5
+        },
         "whisperdictation.language": {
           "type": "string",
           "default": "en",
